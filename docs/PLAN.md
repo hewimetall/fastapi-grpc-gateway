@@ -1,228 +1,199 @@
-# План: FastAPI ↔ gRPC через Rust (Granian + PyO3/tonic)
+# План: gRPC methods для FastAPI (DX как fastapi-jsonrpc)
 
-## Цель
+## Уточнённая цель
 
-Добавить gRPC-gateway в FastAPI так, чтобы для приложения это было **бесшовно**:
+**Не** HTTP→gRPC gateway / не транскодинг REST в protobuf.
 
-- маршруты остаются обычными FastAPI routes (`APIRouter`, `Depends`, OpenAPI);
-- тяжёлая работа (HTTP/2, protobuf, пул каналов, дедлайны) — в **Rust**;
-- рантайм HTTP — **Granian** (Rust-сервер, замена uWSGI/uvicorn для ASGI).
+**Да** — тот же паттерн, что у [`fastapi-jsonrpc`](https://github.com/smagafurov/fastapi-jsonrpc):
 
-Репозиторий сейчас пустой (`README` only). Это greenfield-план реализации `fastapi-grpc-gateway`.
+- пишешь обычные Python-функции (Pydantic, `Body`, `Depends`);
+- регистрируешь их декоратором как RPC-методы;
+- транспорт и диспатч — в Rust (аналог «uwsgi»-слоя → **Granian-подобный** runtime);
+- для приложения бесшовно: тот же стиль, что JSON-RPC entrypoint.
 
----
-
-## Контекст исследования
-
-| Факт | Вывод |
-|------|--------|
-| «Rust uwsgi библиотека» в индустрии = **Granian** (явно позиционируется как замена uWSGI) | Берём Granian как ASGI-сервер |
-| В коде Granian **нет** gRPC | gRPC — отдельный Rust-слой (tonic + PyO3), не фича Granian |
-| Паттерн «FastAPI edge → gRPC stubs» — стандартный gateway | Публичный HTTP/JSON, внутри protobuf |
-| У автора есть `vmcp` (Rust gateway + единый typed surface) | Аналогичный принцип: одно API снаружи, fan-out внутри |
-| Pure-Python варианты (`grpcio`, `fastapi-grpc-bridge`, FastGRPC) | DX ок, но не «через Rust» и не целевой стек |
+Полная поддержка gRPC **не нужна** (без streaming, reflection, grpc-gateway annotations, dual-stack magic).
 
 ---
 
-## Целевая архитектура
-
-```
-Клиент (HTTP/JSON)
-        │
-        ▼
-┌──────────────────────────────────────────┐
-│ Granian (Rust ASGI, HTTP/1+HTTP/2)       │
-│                                          │
-│  FastAPI (Python)                        │
-│   ├─ обычные routes приложения           │
-│   └─ gateway router (бесшовный DX)       │
-│           │                              │
-│           ▼                              │
-│  fastapi_grpc_gateway (Python facade)    │
-│           │ PyO3                         │
-│           ▼                              │
-│  fgg_core (Rust crate)                   │
-│   ├─ tonic client / channel pool         │
-│   ├─ proto ↔ JSON transcoding            │
-│   └─ deadlines / metadata / errors       │
-└──────────────────────────────────────────┘
-        │ gRPC
-        ▼
- Upstream gRPC services
-```
-
-**Бесшовность для приложения** значит:
-
-1. Существующий `FastAPI()` не переписывается.
-2. Подключение — `app.include_router(...)` или `Gateway.mount(app, ...)`.
-3. Хендлеры выглядят как обычные FastAPI endpoints (Pydantic in/out).
-4. Запуск: `granian --interface asgi main:app` вместо uvicorn/uwsgi.
-5. OpenAPI остаётся источником правды для HTTP-клиента.
-
----
-
-## Слои и ответственность
-
-### 1. `crates/fgg-core` (Rust)
-
-- `tonic` клиент к upstream gRPC.
-- Пул `Channel` (lazy connect, reconnect).
-- Transcoding: JSON/path/query → protobuf request; response → JSON bytes.
-- Маппинг `tonic::Status` → HTTP status + тело ошибки (Google error model или свой контракт).
-- Перенос deadline/metadata из HTTP (`X-Request-Id`, `Authorization`, timeout).
-- PyO3 API: `call_unary(service, method, payload_json, metadata) -> bytes`.
-
-### 2. `python/fastapi_grpc_gateway` (Python facade)
-
-- `Gateway` / `GrpcRouter` — тонкая обёртка над Rust-модулем.
-- Генерация или регистрация routes из `.proto` + `google.api.http` (если есть) либо из явного mapping YAML/TOML.
-- Интеграция: `Depends`, lifespan (init/shutdown пула), middleware-совместимость.
-- Типы: Pydantic-модели из proto (codegen) или `dict` + JSON Schema в OpenAPI.
-
-### 3. Сервер: Granian
-
-- Единственный рекомендованный entrypoint для prod.
-- `--interface asgi`, workers/runtime-threads по нагрузке.
-- HTTP/2 на edge — плюс Granian; gRPC к upstream — отдельно из Rust-ядра.
-
----
-
-## Бесшовная интеграция в routes
-
-### Вариант A (предпочтительный DX) — декларативный mount
+## Референс: fastapi-jsonrpc
 
 ```python
-from fastapi import FastAPI
-from fastapi_grpc_gateway import GrpcGateway
+import fastapi_jsonrpc as jsonrpc
+from fastapi import Body
 
-app = FastAPI()
-gw = GrpcGateway.from_proto(
-    "protos/users.proto",
-    target="dns:///users.svc:50051",
-)
+app = jsonrpc.API()
+api_v1 = jsonrpc.Entrypoint('/api/v1/jsonrpc')
 
-# Routes появляются как обычные FastAPI path operations
-app.include_router(gw.router, prefix="/api")
+@api_v1.method()
+def echo(data: str = Body(..., examples=['hello'])) -> str:
+    return data
+
+app.bind_entrypoint(api_v1)
 ```
 
-### Вариант B — явный handler (полный контроль)
+Суть модели:
+
+| JSON-RPC | Наш gRPC-аналог |
+|----------|-----------------|
+| `API()` | `API()` / mount в существующий FastAPI |
+| `Entrypoint('/path')` | `Service('package.Service')` |
+| `@entrypoint.method()` | `@service.method()` |
+| `POST /jsonrpc` + JSON body | gRPC unary на отдельном порту (Rust) |
+| OpenAPI/OpenRPC | опционально proto/descriptor для клиентов |
+| `Depends` / `Body` / ошибки | то же |
+
+Метод — это **Python handler**, а не proxy на чужой gRPC upstream.
+
+---
+
+## Целевой DX
 
 ```python
-@app.get("/users/{user_id}")
-async def get_user(user_id: str, grpc=Depends(gw.stub("users.Users/GetUser"))):
-    return await grpc({"id": user_id})
+import fastapi_grpc as grpc
+from fastapi import Body, Depends
+from pydantic import BaseModel
+
+app = grpc.API()          # совместим с обычным FastAPI-поверхностью
+svc = grpc.Service("demo.Greeter")
+
+class HelloReply(BaseModel):
+    message: str
+
+@svc.method()
+async def say_hello(name: str = Body(...)) -> HelloReply:
+    return HelloReply(message=f"Hello, {name}")
+
+app.bind_service(svc)
+
+# HTTP (docs / health) — Granian ASGI
+# gRPC unary     — Rust listener, вызывает зарегистрированные Python methods
 ```
 
-### Вариант C — гибрид
+Бесшовность:
 
-- codegen из proto → готовые handlers;
-- приложение может переопределить любой route без смены транспорта.
-
-**Инвариант:** Python-код приложения не импортирует `grpcio` / stub-файлы напрямую; только facade.
-
----
-
-## Этапы реализации
-
-### Phase 0 — Каркас репозитория
-
-- Monorepo: `crates/fgg-core`, `python/fastapi_grpc_gateway`, `examples/`, `protos/`, `docs/`.
-- `maturin` / `pyproject.toml` для сборки wheel.
-- CI: Rust test + Python test + wheel build (manylinux).
-- Пример `examples/hello`: FastAPI + Granian + один unary RPC.
-
-### Phase 1 — Минимальный unary path (MVP)
-
-1. Rust: tonic client + `call_unary` через PyO3.
-2. Python: lifespan-managed gateway, один `APIRouter` endpoint.
-3. Ошибки: `Status` → HTTP 4xx/5xx + JSON.
-4. Запуск demo через Granian.
-5. Тесты: mock upstream gRPC + TestClient.
-
-**Критерий готовности MVP:** `@app.get` возвращает JSON из реального gRPC unary без `grpcio` в app-коде.
-
-### Phase 2 — Proto → routes codegen
-
-1. Читать `FileDescriptorSet` / `.proto`.
-2. Поддержать `google.api.http` annotations (как в tonic-rest / grpc-gateway).
-3. Генерировать:
-   - Pydantic models;
-   - FastAPI route handlers;
-   - фрагмент OpenAPI.
-4. CLI: `fgg generate --proto ... --out ...`.
-
-### Phase 3 — Production concerns
-
-- Connection pool, keepalive, TLS/mTLS.
-- Deadlines из HTTP timeout / `Prefer: wait=`.
-- Streaming: server-stream → SSE (HTTP), client-stream — later.
-- Observability: tracing span HTTP→gRPC, metrics (latency, status codes).
-- Hot reload mapping без рестарта процесса (по аналогии с drift в vmcp) — optional.
-
-### Phase 4 — DX polish
-
-- Документация + cookiecutter example.
-- Сравнение latency: grpcio-python stub vs Rust core.
-- Optional: reflection-based discovery для dev.
+1. Те же `Body` / `Depends` / Pydantic / async, что в FastAPI и fastapi-jsonrpc.
+2. Обычные HTTP routes приложения не ломаются.
+3. Запуск: Granian для ASGI + Rust gRPC port из того же процесса (или рядом через embed API).
 
 ---
 
-## Что сознательно НЕ делаем в MVP
+## Архитектура (минимальная)
 
-- Не форкаем Granian под gRPC (у него нет gRPC и не нужно).
-- Не делаем dual-stack «один порт HTTP+gRPC» в первой версии (сложно с ASGI).
-- Не тянем Envoy как обязательную зависимость (можно позже как sidecar).
-- Не обещаем full grpc-gateway feature parity сразу (`additional_bindings`, partial body — после MVP).
+```
+gRPC client                    HTTP client
+    │                              │
+    ▼                              ▼
+┌────────────────┐         ┌─────────────────┐
+│ Rust gRPC      │         │ Granian ASGI    │
+│ unary server   │         │ (HTTP docs etc) │
+│ (tonic)        │         └────────┬────────┘
+└───────┬────────┘                  │
+        │ PyO3 callback             │
+        ▼                           ▼
+   Method registry  ←── FastAPI / grpc.API (Python)
+   (@svc.method handlers)
+```
+
+**Rust делает только:**
+
+- слушает gRPC (HTTP/2 + protobuf framing);
+- маппит `service/method` → зарегистрированный Python callable;
+- сериализует request/response (простой JSON↔proto или protobuf с автоген из сигнатур — см. ниже);
+- возвращает unary status/errors.
+
+**Rust НЕ делает:** streaming, full codegen gateway, Envoy, google.api.http.
 
 ---
 
-## Структура репозитория (целевая)
+## Сериализация (осознанно простая)
+
+Для MVP достаточно одного из двух (выбрать на Phase 0 spike):
+
+1. **Proto-lite / JSON payload в bytes** — метод принимает/отдаёт Pydantic; на wire — protobuf-обёртка `{json: bytes}` или raw JSON encoding (как многие внутренние RPC). Минимум tooling.
+2. **Авто-proto из Pydantic** — при `bind_service` строить descriptor (имя сервиса + message из моделей). Клиентам нужен `.proto` export.
+
+Рекомендация MVP: **вариант 1** (быстрее), экспорт `.proto` — Phase 2.
+
+---
+
+## Объём MVP (что входит / что нет)
+
+### Входит
+
+- `API`, `Service`, `@method()`, `bind_service`
+- Unary call only
+- Pydantic in/out + `Body` / `Depends`
+- Typed errors → gRPC status (+ optional details)
+- Rust unary server + PyO3 dispatch
+- Granian для HTTP-части приложения
+- Example + тесты (grpcurl или tonic client)
+
+### Не входит
+
+- Client streaming / server streaming / bidi
+- gRPC reflection (можно позже одной галкой)
+- HTTP/JSON transcoding, grpc-gateway annotations
+- Конвертация существующих `@app.get` HTTP handlers в gRPC
+- Полная совместимость с произвольными `.proto` от третьих сторон (сначала «наши» методы)
+
+---
+
+## Этапы
+
+### Phase 0 — Spike (1 тонкий вертикальный срез)
+
+1. Разобрать регистрацию методов в fastapi-jsonrpc (`Entrypoint.method`, dependency solving).
+2. Rust: minimal tonic unary + callback в Python (PyO3).
+3. Один `@svc.method()` echo end-to-end через grpcurl.
+
+### Phase 1 — Python facade как jsonrpc
+
+1. Портировать DX: `API` / `Service` / `@method` / `bind_service`.
+2. Dependency injection через FastAPI/Starlette solve (переиспользовать подход jsonrpc).
+3. Error model: `BaseError` → gRPC status code.
+4. Документация: «если умеешь fastapi-jsonrpc — умеешь это».
+
+### Phase 2 — DX + wire polish
+
+1. Export `.proto` / FileDescriptor для клиентов.
+2. Metadata → `Header`-подобные Depends.
+3. Опционально reflection для dev.
+
+### Phase 3 — Runtime
+
+1. Один процесс: Granian ASGI + Rust gRPC listener (embed).
+2. Lifecycle: start/stop вместе с app lifespan.
+3. Базовые метрики/логи method name + latency.
+
+---
+
+## Структура репо
 
 ```
 fastapi-grpc-gateway/
-├── Cargo.toml                 # workspace
-├── crates/
-│   └── fgg-core/              # tonic + PyO3
-├── python/
-│   └── fastapi_grpc_gateway/  # facade + codegen CLI
-├── protos/                    # demo + fixtures
-├── examples/
-│   └── hello/
-│       ├── main.py            # FastAPI app
-│       └── run.sh             # granian --interface asgi main:app
+├── crates/fgg-runtime/     # tonic unary + PyO3 dispatch
+├── python/fastapi_grpc/    # API, Service, @method (зеркало jsonrpc)
+├── examples/echo/
 ├── tests/
-├── docs/
-│   └── PLAN.md                # этот документ
-├── pyproject.toml
-└── README.md
+├── docs/PLAN.md
+└── pyproject.toml          # maturin
 ```
 
----
-
-## Риски и митигация
-
-| Риск | Митигация |
-|------|-----------|
-| Async bridge PyO3 ↔ Tokio сложен | Начать с `pyo3-asyncio` / mature pattern; unary first |
-| GIL / latency | I/O и protobuf в Rust, GIL отпускать на network |
-| Drift proto ↔ routes | Codegen в CI; fail build при рассинхроне |
-| Granian workers × shared state | Channel pool per-worker или external pool process |
-| Слишком широкий scope | Жёсткий MVP: 1 unary + 1 route + Granian |
+Имя пакета Python: `fastapi_grpc` (зеркало `fastapi_jsonrpc`).  
+Имя репо можно оставить; в README явно: **server-side methods**, не gateway-proxy.
 
 ---
 
-## Определение «бесшовно» (acceptance)
+## Acceptance
 
-Приложение считается интегрированным бесшовно, если:
-
-1. Существующие FastAPI routes не ломаются.
-2. Новый gRPC-backed endpoint добавляется через `include_router` / `Depends`, без смены фреймворка.
-3. Prod-команда запуска — Granian ASGI, без uvicorn/uwsgi.
-4. В `requirements` приложения нет прямого `grpcio` (только `fastapi-grpc-gateway` wheel с Rust).
-5. OpenAPI показывает те же path/models, что и HTTP-клиент использует.
+1. Пример из README копипастится и отвечает на unary gRPC call.
+2. Handler пишется как jsonrpc-method (не как REST route и не как grpcio stub).
+3. Нет зависимости приложения от ручных `*_pb2.py` в MVP.
+4. HTTP routes FastAPI продолжают работать через Granian.
+5. Нет streaming / transcoding в scope.
 
 ---
 
-## Следующий шаг после утверждения плана
+## Следующий шаг
 
-Реализовать **Phase 0 + Phase 1 MVP**: каркас monorepo, `fgg-core` unary, Python facade с одним route, example под Granian, тесты.
+Phase 0 spike: echo unary Rust→Python + скелет `Service.method` по образцу fastapi-jsonrpc.

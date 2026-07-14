@@ -1,5 +1,7 @@
 # fastapi-grpc-gateway
 
-gRPC gateway for FastAPI: Rust core (tonic + PyO3), Granian as the ASGI server (Rust replacement for uWSGI), seamless FastAPI routes.
+gRPC **methods** for FastAPI — same DX as [`fastapi-jsonrpc`](https://github.com/smagafurov/fastapi-jsonrpc): decorate Python functions, Rust handles the unary wire.
 
-See **[docs/PLAN.md](docs/PLAN.md)** for the implementation plan.
+Not an HTTP→gRPC transcoding gateway. Not full gRPC (no streaming / reflection required for MVP).
+
+See **[docs/PLAN.md](docs/PLAN.md)**.
