@@ -9,6 +9,7 @@ build/
 venv/
 /gen/
 target/
+dist/
 *.pb
 .mypy_cache/
 .ruff_cache/

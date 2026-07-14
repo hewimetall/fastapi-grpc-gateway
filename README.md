@@ -1,48 +1,92 @@
 # fastapi-grpc-gateway
 
-Minimal Python + Rust worker:
+Делает так, чтобы к обычному FastAPI можно было ходить ещё и по **gRPC**.
 
 ```
-gRPC client (Go/Python/…) → fgg-worker (Rust) → HTTP → Granian → FastAPI app
+HTTP  → Granian → FastAPI
+gRPC  → Rust worker → (тот же) Granian → FastAPI
 ```
 
-Python only walks routes and emits `service.proto` + `bindings.toml`.  
-Runtime convert/dispatch is the Rust worker.
+FastAPI остаётся обычным. Worker только переводит gRPC в HTTP.
 
-## Quick start
+---
+
+## С чего начать
+
+**Прочитайте:** [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md) — простым языком: схема, шаги, примеры.
+
+## За 30 секунд
 
 ```bash
 pip install -e ".[dev]"
-export PATH="$HOME/.local/protoc/bin:$PATH"   # if needed
 cargo build -p fgg-worker
 
-# schema
+# 1) сгенерировать схемы из FastAPI-роутов
 PYTHONPATH=examples fgg generate --app hello_app:app --out ./gen
 
-# HTTP (Granian)
+# 2) HTTP
 cd examples && granian --interface asgi --host 127.0.0.1 --port 8000 hello_app:app
 
-# gRPC worker (other terminal)
+# 3) gRPC worker (другой терминал)
 ./target/debug/fgg-worker \
   --bind 127.0.0.1:50051 \
   --upstream http://127.0.0.1:8000 \
   --bindings ./gen/bindings.toml
 ```
 
-## Go client test
+Проверка:
 
-```bash
-bash scripts/test_go_client.sh
-# PASS: TestGetHello / TestGetUser / TestPostCreateItem (grpc-go)
-```
+- HTTP: `curl http://127.0.0.1:8000/api/hello`
+- gRPC (Go): `bash scripts/test_go_client.sh`
 
-## Tests
+Или одной командой: `bash scripts/run_example.sh`
+
+---
+
+## Кто за что отвечает
+
+| Компонент | Роль |
+|-----------|------|
+| `examples/hello_app.py` | Ваше FastAPI-приложение |
+| `fgg generate` | Пишет `gen/service.proto` + `gen/bindings.toml` |
+| Granian | HTTP-сервер для FastAPI |
+| `fgg-worker` | gRPC-сервер → HTTP на Granian |
+| `clients/go` | Пример официального Go gRPC-клиента |
+
+---
+
+## Тесты
 
 ```bash
 cargo build -p fgg-worker
 pip install -e ".[dev]"
-pytest
-bash scripts/test_go_client.sh
+pytest                          # schema + python e2e
+bash scripts/test_go_client.sh  # Go grpc-go клиент
 ```
 
-See [`docs/PLAN.md`](docs/PLAN.md).
+## Сборка Python wheel
+
+Локально:
+
+```bash
+pip install build
+python -m build
+# → dist/fastapi_grpc_gateway-*.whl
+```
+
+CI:
+
+- Сборка на каждый PR/push: [`.github/workflows/python-wheel.yml`](.github/workflows/python-wheel.yml)
+- Релиз по тегу `v*`: GitHub Release + PyPI — [`.github/workflows/python-release.yml`](.github/workflows/python-release.yml)
+
+Как поставить в проект и как выложить релиз: **[docs/PUBLISHING.md](docs/PUBLISHING.md)**.
+
+---
+
+## Документация
+
+| Файл | Содержание |
+|------|------------|
+| [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md) | Как работает, простыми словами |
+| [docs/PUBLISHING.md](docs/PUBLISHING.md) | pip / PyPI / GitHub Releases |
+| [docs/PLAN.md](docs/PLAN.md) | Краткий план / границы скоупа |
