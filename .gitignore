@@ -7,10 +7,10 @@ build/
 .pytest_cache/
 .venv/
 venv/
-gen/
+/gen/
 target/
 *.pb
 .mypy_cache/
 .ruff_cache/
-Cargo.lock
+/Cargo.lock
 
