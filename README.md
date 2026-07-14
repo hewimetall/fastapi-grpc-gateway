@@ -64,6 +64,18 @@ pytest                          # schema + python e2e
 bash scripts/test_go_client.sh  # Go grpc-go клиент
 ```
 
+## Сборка Python wheel
+
+Локально:
+
+```bash
+pip install build
+python -m build
+# → dist/fastapi_grpc_gateway-*.whl
+```
+
+CI: [`.github/workflows/python-wheel.yml`](.github/workflows/python-wheel.yml) собирает `.whl` / sdist и кладёт в Artifacts.
+
 ---
 
 ## Документация
