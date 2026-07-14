@@ -1,36 +1,21 @@
-# План: Rust worker + Granian + минимальный Python
+# План / границы
 
-## Модель
+Полное описание — в **[HOW_IT_WORKS.md](HOW_IT_WORKS.md)**.
+
+## Архитектура
 
 ```
-gRPC unary
-    │
-    ▼
-fgg-worker (Rust)     # convert gRPC → HTTP
-    │
-    ▼
-Granian ASGI          # HTTP server
-    │
-    ▼
-FastAPI app           # обычный спуск routes
+gRPC → fgg-worker (Rust) → HTTP → Granian → FastAPI
 ```
 
-Python **минимален**: только обход `app.routes` → `service.proto` + `bindings.toml`.
+- Python: только генерация `service.proto` + `bindings.toml`
+- Rust worker: convert + proxy
+- Granian: ASGI для приложения
 
-## Артефакты `fgg generate`
+## В скоупе
 
-| Файл | Кто читает |
-|------|------------|
-| `service.proto` | клиенты / grpcurl codegen |
-| `bindings.toml` | Rust worker (rpc → method/path) |
+JSON unary routes, path/query/body, schema gen, Go/Python gRPC-клиенты.
 
-Wire: общий `RpcRequest` / `JsonResponse` (path/query/body maps) — worker app-agnostic.
+## Вне скоупа
 
-## Запуск
-
-1. `granian --interface asgi hello_app:app`
-2. `fgg-worker --upstream http://127.0.0.1:8000 --bindings gen/bindings.toml`
-
-## Скоуп
-
-JSON unary routes. Без cookies / redirects / File / Streaming.
+Cookies, redirects, FileResponse, StreamingResponse, WebSocket.
