@@ -139,29 +139,44 @@ path = "/api/users/{user_id}"
 
 ---
 
-## Как запустить локально
+## Как запустить (готовые пакеты, без сборки)
 
-Нужны **два процесса** (как nginx + приложение).
+Нужны **два процесса** (как nginx + приложение). Сборку из исходников не требуется.
+
+### Один раз поставить
+
+```bash
+pip install fastapi-grpc-gateway granian
+
+# worker с GitHub Release
+curl -sL -o fgg-worker \
+  https://github.com/hewimetall/fastapi-grpc-gateway/releases/download/v0.1.0/fgg-worker-x86_64-unknown-linux-gnu
+chmod +x fgg-worker
+```
+
+Если PyPI ещё пустой — wheel тоже с Release:
+
+```bash
+pip install \
+  https://github.com/hewimetall/fastapi-grpc-gateway/releases/download/v0.1.0/fastapi_grpc_gateway-0.1.0-py3-none-any.whl
+pip install granian
+```
 
 ### Терминал A — FastAPI через Granian
 
 ```bash
-pip install -e ".[dev]"
-cd examples
-granian --interface asgi --host 127.0.0.1 --port 8000 hello_app:app
+# ваш app.py или examples/hello_app.py
+granian --interface asgi --host 127.0.0.1 --port 8000 app:app
 ```
 
 Проверка: `curl http://127.0.0.1:8000/api/hello`
 
-### Терминал B — схемы + Rust worker
+### Терминал B — схемы + worker
 
 ```bash
-# один раз
-cargo build -p fgg-worker
-PYTHONPATH=examples fgg generate --app hello_app:app --out ./gen
+fgg generate --app app:app --out ./gen
 
-# старт worker
-./target/debug/fgg-worker \
+./fgg-worker \
   --bind 127.0.0.1:50051 \
   --upstream http://127.0.0.1:8000 \
   --bindings ./gen/bindings.toml
@@ -170,9 +185,9 @@ PYTHONPATH=examples fgg generate --app hello_app:app --out ./gen
 ### Клиент
 
 - HTTP: `curl http://127.0.0.1:8000/api/hello`
-- gRPC (Go-тест): `bash scripts/test_go_client.sh`
+- gRPC (Go): см. `clients/go` / `bash scripts/test_go_client.sh` (для разработки репо)
 
-Или всё сразу: `bash scripts/run_example.sh`
+Для разработки **этого** репозитория из исходников: `pip install -e ".[dev]"` и `cargo build -p fgg-worker`.
 
 ---
 

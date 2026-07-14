@@ -1,11 +1,11 @@
 # Как поставить пакет и как публиковать
 
-## Как притащить в свой проект
+## В свой проект (без сборки)
 
-### После публикации в PyPI (тег `v*`)
+### Python
 
 ```bash
-pip install fastapi-grpc-gateway
+pip install fastapi-grpc-gateway granian
 ```
 
 В `pyproject.toml`:
@@ -13,50 +13,59 @@ pip install fastapi-grpc-gateway
 ```toml
 dependencies = [
   "fastapi-grpc-gateway>=0.1.0",
+  "granian>=1.6.0",
 ]
 ```
 
-### Пока не в PyPI / для разработки
+Если на PyPI ещё нет — с GitHub Release:
 
 ```bash
-# из git
-pip install "git+https://github.com/hewimetall/fastapi-grpc-gateway.git@main"
-
-# с GitHub Release (после тега)
-pip install https://github.com/hewimetall/fastapi-grpc-gateway/releases/download/v0.1.0/fastapi_grpc_gateway-0.1.0-py3-none-any.whl
+pip install \
+  https://github.com/hewimetall/fastapi-grpc-gateway/releases/download/v0.1.0/fastapi_grpc_gateway-0.1.0-py3-none-any.whl
 ```
 
-Rust-бинарник `fgg-worker` в wheel **не входит** — его ставят отдельно (`cargo build -p fgg-worker` или свой релиз).
+### Rust worker (бинарник)
+
+```bash
+curl -sL -o fgg-worker \
+  https://github.com/hewimetall/fastapi-grpc-gateway/releases/download/v0.1.0/fgg-worker-x86_64-unknown-linux-gnu
+chmod +x fgg-worker
+```
+
+Wheel **не** содержит `fgg-worker` — это отдельный файл в Release.
+
+### Дальше
+
+```bash
+fgg generate --app app:app --out ./gen
+granian --interface asgi --host 127.0.0.1 --port 8000 app:app
+./fgg-worker --bind 127.0.0.1:50051 --upstream http://127.0.0.1:8000 --bindings ./gen/bindings.toml
+```
 
 ---
 
 ## Как выложить релиз
 
-1. Подними версию в `pyproject.toml` (`version = "0.1.0"`).
-2. Закоммить и поставь тег **с той же версией**:
+1. Версия в `pyproject.toml` (`version = "0.1.0"`).
+2. Тег с той же версией:
 
 ```bash
 git tag v0.1.0
 git push origin v0.1.0
 ```
 
-3. Workflow [`.github/workflows/python-release.yml`](../.github/workflows/python-release.yml) сам:
-   - соберёт `.whl` + sdist
-   - создаст **GitHub Release** и прикрепит файлы
-   - отправит пакет в **PyPI** (Trusted Publishing)
+3. Workflow [`.github/workflows/python-release.yml`](../.github/workflows/python-release.yml):
+   - `.whl` + sdist
+   - бинарник `fgg-worker-x86_64-unknown-linux-gnu`
+   - **GitHub Release** со всеми файлами
+   - **PyPI** (Trusted Publishing; если не настроено — шаг может упасть, Release всё равно будет)
 
-### Один раз настроить PyPI Trusted Publishing
+### Один раз: PyPI Trusted Publishing
 
-1. Зайди на https://pypi.org → Manage → Publishing → **Add a new pending publisher**
-2. Укажи:
-   - Owner: `hewimetall`
-   - Repository: `fastapi-grpc-gateway`
-   - Workflow: `python-release.yml`
-   - Environment: `pypi`
-3. В GitHub репо: Settings → Environments → создай environment **`pypi`** (можно без protection rules).
-
-После первого успешного тега: `pip install fastapi-grpc-gateway`.
+1. https://pypi.org → Publishing → pending publisher
+2. Owner `hewimetall`, repo `fastapi-grpc-gateway`, workflow `python-release.yml`, environment `pypi`
+3. GitHub → Settings → Environments → **`pypi`**
 
 ### Dry-run
 
-В Actions → **Release Python package** → Run workflow → `dry_run: true` — только сборка, без публикации.
+Actions → **Release** → Run workflow → `dry_run: true`.
