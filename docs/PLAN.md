@@ -1,154 +1,109 @@
-# План: gRPC entry → FastAPI (unary JSON)
+# План: gRPC → convert → `app` (ASGI)
 
-## Скоуп (зафиксировано)
-
-Обычное приложение:
+## Модель
 
 ```python
 app = FastAPI()
 app.include_router(router, prefix="/api")
 ```
 
-В lifespan: снимок routes → proto/method map → gRPC entry (Rust).
-
-Поток:
+Адаптер **не** выбирает handler и **не** держит `methods.json`.  
+Он только конвертит gRPC ↔ HTTP и **прокидывает в `app`**; дальше обычный спуск Starlette/FastAPI (routing, Depends, validation).
 
 ```
-grpc session → adapter → FastAPI (DI / route handler) → adapter → session
+gRPC unary
+    │
+    ▼
+convert → ASGI scope + receive  (method, path, headers, body)
+    │
+    ▼
+app(scope, receive, send)       # сам роутит и исполняет
+    │
+    ▼
+convert ← ASGI response         → gRPC status + message
 ```
-
-**Вне скоупа (не поддерживаем, не обсуждаем):**
-cookies / SessionMiddleware, `RedirectResponse`, `FileResponse`, `StreamingResponse`, WebSocket.
-
-**В скоупе:** JSON/Pydantic unary routes, `Depends`, path/query/body, metadata→headers, статус→grpc-status, **генерация схем**.
 
 ---
 
-## Генерация схем
+## Скоуп
 
-Источник правды — дерево FastAPI (`app.routes` / OpenAPI). Схемы нужны клиентам и Rust listener’у.
+**Да:** JSON/Pydantic unary routes, path/query/body, metadata→headers, peer→`scope["client"]`, status→grpc-status, генерация `.proto` (+ descriptor для runtime server).
 
-### Что генерируем
+**Нет:** cookies, redirects, FileResponse, StreamingResponse, WebSocket, отдельная method-table для диспатча.
+
+---
+
+## Схемы
+
+Генератор из `app.routes` / OpenAPI:
 
 | Артефакт | Зачем |
 |----------|--------|
-| `.proto` (services + messages) | grpcurl, codegen клиентов (Go/TS/Python) |
-| `FileDescriptorSet` (`.pb` / bytes) | runtime reflection-lite / динамический servicer в Rust |
-| method map JSON (`operationId` → path, method, params) | адаптер без парсинга proto |
-| (опц.) OpenAPI slice только gRPC-exposed routes | единый HTTP+gRPC каталог в docs |
+| `.proto` | клиенты, grpcurl, codegen |
+| `FileDescriptorSet` | Rust gRPC server (сообщения/сервисы на wire) |
 
-### Когда
+В proto (или options) фиксируется, **как request message раскладывается в HTTP** (path/query/body), чтобы convert был чистой функцией:  
+`RPC + message → (http_method, path, headers, body)` без внешнего JSON-маппинга.
 
-1. **Offline CLI** (CI / pre-commit):
-   ```bash
-   fgg generate --app main:app --out ./gen
-   # → gen/service.proto, gen/descriptor.pb, gen/methods.json
-   ```
-2. **Lifespan runtime**: тот же генератор при старте (если нет prebuilt), либо загрузка `descriptor.pb` с диска.
-3. **HTTP endpoint** (опц.): `GET /grpc/schema.proto` / `GET /grpc/descriptor.pb` для клиентов.
+Runtime: listener читает descriptor, принимает unary, convert → `app`, convert назад.
 
-### Правила генерации (JSON-only)
+CLI:
 
-- Один `APIRoute` → один unary RPC.
-- Path/query/body params → request message fields (Pydantic / OpenAPI schema).
-- `response_model` / 200 schema → response message.
-- Имя RPC: `generate_unique_id` / `operationId` / конвенция `MethodPath` (конфиг).
-- Package/service: из settings (`package=app.api`, `service=Api`).
-- Route вне support matrix — skip + warning (или `--strict` fail).
-
-### DX
-
-```python
-from fastapi_grpc_gateway import GrpcGateway
-
-gw = GrpcGateway(app)          # или mount в lifespan
-gw.export_proto("gen/api.proto")
-gw.export_descriptor("gen/api.pb")
+```bash
+fgg generate --app main:app --out ./gen
+# gen/service.proto, gen/descriptor.pb
 ```
-
-CLI и runtime API должны давать **бит-идентичный** результат на одном и том же `app`.
 
 ---
 
-## Почему это уже можно
+## Convert (единственная зона ответственности адаптера)
 
-После выкидывания HTTP-only фич адаптер = тот же класс задач, что FastStream:
+**Вход → ASGI**
 
-1. gRPC peer/metadata → ASGI `scope` (`client`, `headers`, `path`, `method`, body).
-2. Вызов handler через FastAPI DI (`solve_dependencies` + `run_endpoint_function`) **или** полный ASGI на один route.
-3. Response body (JSON/Pydantic) → protobuf/JSON payload; HTTP status → `grpc-status`.
+- `scope["type"] = "http"`
+- `method` / `path` / `query_string` из RPC + message (+ http-binding из descriptor)
+- `headers` из gRPC metadata (+ `authorization` и т.п.)
+- `client` из `peer()`
+- `receive` отдаёт body bytes (JSON из message / уже JSON-поле)
 
-`request.client.host` и auth header — заполняются в адаптере из session/peer/metadata. Это не блокер.
+**ASGI → выход**
 
----
+- status + body из `send`
+- JSON body → response message
+- HTTP status → `grpc-status` (таблица 2xx→OK, 404→NOT_FOUND, 422→INVALID_ARGUMENT, …)
 
-## Архитектура
-
-```
-gRPC client (unary)
-        │
-        ▼
-Rust listener (отдельный порт; не uWSGI/Granian entry)
-        │ method → (http_method, path, body mapping)
-        ▼
-Python adapter
-        │ synthetic Request / ASGI call
-        ▼
-FastAPI app (существующие routes под /api/...)
-        │
-        ▼
-adapter → gRPC response
-```
-
-HTTP docs/health по-прежнему через Granian ASGI.  
-gRPC — соседний listener в том же процессе (lifespan start/stop).
+Диспатч по path — **только** внутри `app`.
 
 ---
 
 ## Lifespan
 
-1. После монтирования всех router'ов обойти `app.routes` / `iter_route_contexts` / OpenAPI.
-2. Оставить только поддерживаемые `APIRoute` (JSON in/out, без file/stream/redirect).
-3. Прогнать schema generator → method table + `.proto` / descriptor (или загрузить prebuilt из CLI).
-4. Старт Rust unary server с callback в Python adapter (+ отдать descriptor клиентам при необходимости).
-5. Shutdown — stop listener.
-
----
-
-## Маппинг (минимальный контракт)
-
-| FastAPI | gRPC |
-|---------|------|
-| `GET /api/users/{id}` | `Api.GetUsersId` + field `id` |
-| query/body → message fields | по OpenAPI parameters |
-| `200` + JSON | `OK` + message |
-| `4xx/5xx` + `detail` | status + optional error payload |
-| `Authorization` metadata | `Authorization` header в scope |
-
-Имена RPC и package — конфиг/конвенция (не claim «идеальный proto»).
+1. Routes уже смонтированы.
+2. Load prebuilt descriptor **или** сгенерировать из app.
+3. Старт Rust unary listener; на каждый call — convert → `await app(...)` → convert.
+4. Stop listener.
 
 ---
 
 ## Этапы
 
-### Phase 0 — Spike
-Один `@app.get` JSON → unary gRPC; peer в `request.client`; ручной proto ок.
+### Phase 0
+Один route: руками convert → `app` → ответ; без method table.
 
-### Phase 1 — Schema gen
-CLI + API: `app` → `.proto` + `methods.json` + descriptor; несколько routes / path params; skip unsupported.
+### Phase 1
+Генерация `.proto` + descriptor; convert читает binding из descriptor.
 
-### Phase 2 — Runtime
-Lifespan грузит/генерит схемы; Rust listener + Granian; validation → `INVALID_ARGUMENT`; опц. `GET /grpc/schema.proto`.
+### Phase 2
+Lifespan + Granian (HTTP) + gRPC listener; status map; CLI = runtime gen.
 
 ### Phase 3
-Deadline/cancel; стабильные имена RPC (snapshot tests на gen/).
+Cancel/deadline → отмена ASGI task (по желанию).
 
 ---
 
 ## Acceptance
 
-1. `app = FastAPI(); include_router(...)` без смены DX handlers.
-2. Unary gRPC вызывает тот же handler, что HTTP (JSON).
-3. `fgg generate` / `gw.export_proto` даёт `.proto` (+ descriptor) из routes.
-4. CLI и lifespan-gen совпадают на одном app.
-5. Нет cookies/redirect/file/stream в support matrix; unsupported → skip или `--strict` fail.
+1. Handlers пишутся как обычный FastAPI; `include_router` без изменений.
+2. gRPC call доходит до того же route через **полный** спуск `app`.
+3. Адаптер не содержит списка routes / `methods.json`.
+4. Есть генерация `.proto` (+ descriptor) из app.
