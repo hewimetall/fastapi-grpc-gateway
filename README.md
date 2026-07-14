@@ -1,5 +1,9 @@
 # fastapi-grpc-gateway
 
-Обычный FastAPI (`include_router`) + идея gRPC entry через обход дерева в lifespan.
+gRPC unary entry over existing FastAPI JSON routes:
 
-**Короткий вывод:** нативно `grpc session → FastAPI` через uWSGI/Granian **нельзя** — разбор в [`docs/PLAN.md`](docs/PLAN.md).
+`grpc → adapter → FastAPI → adapter`
+
+No cookies / redirects / FileResponse / StreamingResponse.
+
+See [`docs/PLAN.md`](docs/PLAN.md).
