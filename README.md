@@ -1,7 +1,5 @@
 # fastapi-grpc-gateway
 
-gRPC **methods** for FastAPI — same DX as [`fastapi-jsonrpc`](https://github.com/smagafurov/fastapi-jsonrpc): decorate Python functions, Rust handles the unary wire.
+Обычный FastAPI (`include_router`) + идея gRPC entry через обход дерева в lifespan.
 
-Not an HTTP→gRPC transcoding gateway. Not full gRPC (no streaming / reflection required for MVP).
-
-See **[docs/PLAN.md](docs/PLAN.md)**.
+**Короткий вывод:** нативно `grpc session → FastAPI` через uWSGI/Granian **нельзя** — разбор в [`docs/PLAN.md`](docs/PLAN.md).
