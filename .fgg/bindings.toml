@@ -1,2 +1,0 @@
-package = "fastapi_grpc"
-service = "API"

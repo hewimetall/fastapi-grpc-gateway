@@ -8,6 +8,7 @@ build/
 .venv/
 venv/
 /gen/
+.fgg/
 target/
 dist/
 *.pb
