@@ -111,19 +111,22 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           body: |
-            ## Install
+            ## Install (без локальной сборки)
 
             ```bash
-            pip install fastapi-grpc-gateway==${{ github.ref_name }}
-            # or from this release assets:
-            # pip install https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/fastapi_grpc_gateway-*.whl
+            # Python
+            pip install https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/fastapi_grpc_gateway-${{ github.ref_name }}.whl
+            # если имя файла с подчёркиваниями:
+            # pip install https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/fastapi_grpc_gateway-0.1.0-py3-none-any.whl
+            pip install granian
 
+            # Worker
             curl -sL -o fgg-worker \
               https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/fgg-worker-x86_64-unknown-linux-gnu
             chmod +x fgg-worker
             ```
 
-            Tag version without `v` prefix for pip if needed — package version matches tag body (`v0.1.0` → `0.1.0`).
+            После настройки PyPI Trusted Publishing: `pip install fastapi-grpc-gateway==0.1.0` (без префикса `v`).
 
   pypi-publish:
     name: Publish to PyPI
