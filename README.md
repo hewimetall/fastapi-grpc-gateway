@@ -69,6 +69,9 @@ pytest
 bash scripts/test_go_client.sh
 ```
 
+`pytest` гоняет unit/e2e и **требует coverage ≥ 93%** (`--cov-fail-under=93`).  
+Порог задан в `pyproject.toml` (`tool.coverage.report.fail_under`). Сгенерированный `wire_pb2.py` из покрытия исключён.
+
 ---
 
 ## Документация

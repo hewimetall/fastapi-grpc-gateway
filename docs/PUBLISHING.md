@@ -29,6 +29,8 @@ fgg serve --app app:app --http-port 8000 --grpc-bind 127.0.0.1:50051 --out ./gen
 
 Отдельный бинарник `fgg-worker` больше не нужен — gRPC и HTTP в одном `fgg serve`.
 
+Для разработки: `pip install -e ".[dev]" && pytest` (coverage ≥ 93%).
+
 ---
 
 ## Как выложить релиз

@@ -142,9 +142,24 @@ resp, _ := client.GetUser(ctx, &pb.RpcRequest{
 fastapi_grpc_gateway/   # generate + serve (Granian embed + gRPC→ASGI)
 examples/hello_app.py
 clients/go/
+tests/                  # unit + e2e; coverage ≥ 93%
 scripts/
 docs/HOW_IT_WORKS.md
 ```
+
+---
+
+## Тесты и coverage
+
+```bash
+pip install -e ".[dev]"
+pytest
+```
+
+Порог: **≥ 93%** line coverage по пакету `fastapi_grpc_gateway` (без `wire_pb2.py`).  
+Конфиг: `pyproject.toml` → `tool.pytest.ini_options.addopts` / `tool.coverage.*`.
+
+Go e2e: `bash scripts/test_go_client.sh`.
 
 ---
 

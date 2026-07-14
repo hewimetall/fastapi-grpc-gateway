@@ -42,3 +42,22 @@ async def test_call_asgi_get_and_post():
     )
     assert status == 200
     assert json.loads(body)["name"] == "x"
+
+
+@pytest.mark.asyncio
+async def test_call_asgi_receive_disconnect_branch():
+    """Drive receive() past the first http.request into http.disconnect."""
+
+    events: list[str] = []
+
+    async def raw_app(scope, receive, send):
+        events.append((await receive())["type"])
+        events.append((await receive())["type"])
+        await send({"type": "http.response.start", "status": 204, "headers": []})
+        await send({"type": "http.response.body", "body": b"", "more_body": False})
+
+    status, body, headers = await call_asgi(raw_app, method="GET", path="/")
+    assert status == 204
+    assert body == b""
+    assert events == ["http.request", "http.disconnect"]
+    assert headers == {}

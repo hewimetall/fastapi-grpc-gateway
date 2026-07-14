@@ -45,6 +45,7 @@ async def serve_app(
     bindings_path: Path | None = None,
     schema_out: Path | None = None,
     enable_http: bool = True,
+    stop_event: asyncio.Event | None = None,
 ) -> None:
     """
     One process, one ASGI app instance:
@@ -94,7 +95,7 @@ async def serve_app(
 
     log.info("gRPC on grpc://%s (in-process ASGI)", grpc_bind)
 
-    stop = asyncio.Event()
+    stop = stop_event if stop_event is not None else asyncio.Event()
 
     def _handle_signal() -> None:
         stop.set()

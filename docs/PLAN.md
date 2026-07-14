@@ -16,7 +16,8 @@ gRPC  → ASGI adapter ──┘
 
 ## В скоупе
 
-JSON unary routes, path/query/body, schema gen, Go/Python gRPC-клиенты.
+JSON unary routes, path/query/body, schema gen, Go/Python gRPC-клиенты,  
+`fgg serve` (Granian embed + gRPC→ASGI), тесты с **coverage ≥ 93%**.
 
 ## Вне скоупа
 
