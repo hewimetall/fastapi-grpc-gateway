@@ -74,7 +74,12 @@ python -m build
 # → dist/fastapi_grpc_gateway-*.whl
 ```
 
-CI: [`.github/workflows/python-wheel.yml`](.github/workflows/python-wheel.yml) собирает `.whl` / sdist и кладёт в Artifacts.
+CI:
+
+- Сборка на каждый PR/push: [`.github/workflows/python-wheel.yml`](.github/workflows/python-wheel.yml)
+- Релиз по тегу `v*`: GitHub Release + PyPI — [`.github/workflows/python-release.yml`](.github/workflows/python-release.yml)
+
+Как поставить в проект и как выложить релиз: **[docs/PUBLISHING.md](docs/PUBLISHING.md)**.
 
 ---
 
@@ -83,4 +88,5 @@ CI: [`.github/workflows/python-wheel.yml`](.github/workflows/python-wheel.yml) �
 | Файл | Содержание |
 |------|------------|
 | [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md) | Как работает, простыми словами |
+| [docs/PUBLISHING.md](docs/PUBLISHING.md) | pip / PyPI / GitHub Releases |
 | [docs/PLAN.md](docs/PLAN.md) | Краткий план / границы скоупа |

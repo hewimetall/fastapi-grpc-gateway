@@ -4,9 +4,18 @@ version = "0.1.0"
 description = "Minimal Python schema gen for Rust gRPC→HTTP worker over Granian/FastAPI"
 readme = "README.md"
 requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "hewimetall" }]
+keywords = ["fastapi", "grpc", "granian", "schema"]
 dependencies = [
     "fastapi>=0.115.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/hewimetall/fastapi-grpc-gateway"
+Repository = "https://github.com/hewimetall/fastapi-grpc-gateway"
+Issues = "https://github.com/hewimetall/fastapi-grpc-gateway/issues"
+Documentation = "https://github.com/hewimetall/fastapi-grpc-gateway/blob/main/docs/HOW_IT_WORKS.md"
 
 [project.optional-dependencies]
 dev = [
