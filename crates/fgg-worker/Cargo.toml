@@ -1,9 +1,10 @@
 [package]
 name = "fgg-worker"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "gRPC worker: convert unary calls to HTTP and forward to Granian/FastAPI"
+description = "gRPC server (Rust): RpcRequest → HTTP → Granian/FastAPI — no Python gRPC"
 rust-version = "1.83"
+license = "MIT"
 
 [[bin]]
 name = "fgg-worker"
@@ -12,17 +13,16 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1"
 bytes = "1"
+clap = { version = "=4.5.23", features = ["derive", "env"] }
+fgg-core = { path = "../fgg-core" }
 http = "1"
 http-body-util = "0.1"
 hyper = { version = "1.5", features = ["http1", "http2", "server", "client"] }
-hyper-util = { version = "0.1.10", features = ["tokio", "server-auto", "http1", "http2", "client", "client-legacy"] }
+hyper-util = { version = "0.1.10", features = ["tokio", "http1", "http2", "client", "client-legacy"] }
 prost = "0.13.4"
-serde = { version = "1", features = ["derive"] }
 tokio = { version = "1.42", features = ["macros", "rt-multi-thread", "net", "signal"] }
-toml = "0.8.19"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-clap = { version = "=4.5.23", features = ["derive", "env"] }
 
-[build-dependencies]
-prost-build = "0.13.4"
+[dev-dependencies]
+tokio = { version = "1.42", features = ["macros", "rt-multi-thread", "net", "io-util"] }

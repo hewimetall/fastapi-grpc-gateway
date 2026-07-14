@@ -1,4 +1,4 @@
-"""Minimal FastAPI app — run under Granian; gRPC via Rust fgg-worker."""
+"""Minimal FastAPI app — serve with `fgg serve --app hello_app:app`."""
 
 from fastapi import Body, FastAPI
 from pydantic import BaseModel

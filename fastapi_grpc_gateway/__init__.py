@@ -1,4 +1,4 @@
-"""Minimal FastAPI helpers: route walk + .proto / bindings generation."""
+"""FastAPI schema gen + Granian orchestrator (gRPC is Rust-only)."""
 
 from fastapi_grpc_gateway.schema import generate_schema, iter_json_routes
 

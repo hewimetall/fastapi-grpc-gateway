@@ -1,4 +1,4 @@
-"""CLI: fgg generate — emit proto + bindings for the Rust worker."""
+"""CLI: fgg generate | fgg serve — schema gen + Granian + Rust fgg-worker."""
 
 from __future__ import annotations
 
@@ -26,6 +26,37 @@ def main(argv: list[str] | None = None) -> None:
     gen.add_argument("--package", default="fastapi_grpc")
     gen.add_argument("--service", default="API")
 
+    serve = sub.add_parser(
+        "serve",
+        help="Granian HTTP + Rust fgg-worker gRPC (no Python gRPC)",
+    )
+    serve.add_argument("--app", required=True)
+    serve.add_argument("--http-host", default="127.0.0.1")
+    serve.add_argument("--http-port", type=int, default=8000)
+    serve.add_argument("--grpc-bind", default="127.0.0.1:50051")
+    serve.add_argument("--package", default="fastapi_grpc")
+    serve.add_argument("--service", default="API")
+    serve.add_argument(
+        "--out",
+        default=None,
+        help="Directory to write service.proto + bindings.toml",
+    )
+    serve.add_argument(
+        "--bindings",
+        default=None,
+        help="Optional bindings.toml (default: generated from app routes)",
+    )
+    serve.add_argument(
+        "--no-grpc",
+        action="store_true",
+        help="Only Granian HTTP (do not spawn Rust fgg-worker)",
+    )
+    serve.add_argument(
+        "--worker",
+        default=None,
+        help="Path to fgg-worker binary (or set FGG_WORKER)",
+    )
+
     args = parser.parse_args(argv)
     if args.cmd == "generate":
         from fastapi_grpc_gateway.schema import generate_schema
@@ -39,6 +70,26 @@ def main(argv: list[str] | None = None) -> None:
         print(f"wrote {out / 'service.proto'}")
         print(f"wrote {out / 'bindings.toml'}")
         print(f"routes: {len(bundle.routes)}")
+        return
+
+    if args.cmd == "serve":
+        from fastapi_grpc_gateway.serve import run_serve
+
+        app = _load_app(args.app)
+        run_serve(
+            app,
+            http_host=args.http_host,
+            http_port=args.http_port,
+            grpc_bind=args.grpc_bind,
+            package=args.package,
+            service=args.service,
+            bindings_path=Path(args.bindings) if args.bindings else None,
+            schema_out=Path(args.out) if args.out else None,
+            enable_http=True,
+            enable_grpc=not args.no_grpc,
+            worker_bin=Path(args.worker) if args.worker else None,
+        )
+        return
 
 
 if __name__ == "__main__":

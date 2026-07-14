@@ -1,3 +1,3 @@
 [workspace]
-members = ["crates/fgg-worker"]
+members = ["crates/fgg-core", "crates/fgg-worker"]
 resolver = "2"

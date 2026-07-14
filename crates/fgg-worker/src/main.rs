@@ -1,4 +1,7 @@
-use std::collections::HashMap;
+//! fgg-worker — gRPC lives here (Rust), not in Python.
+//!
+//! Flow: gRPC client → this process → HTTP → Granian → FastAPI
+
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -7,8 +10,12 @@ use std::sync::Arc;
 use std::task::{Context as TaskContext, Poll};
 
 use anyhow::{anyhow, Context, Result};
-use bytes::{Buf, BufMut, Bytes, BytesMut};
+use bytes::Bytes;
 use clap::Parser;
+use fgg_core::{
+    build_http_target, decode_grpc_payload, encode_grpc_payload, load_bindings, JsonResponse,
+    RpcRequest, RouteBinding,
+};
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Body, Frame, Incoming};
 use hyper::server::conn::http2;
@@ -18,18 +25,15 @@ use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use prost::Message;
-use serde::Deserialize;
+use std::collections::HashMap;
 use tokio::net::TcpListener;
 use tracing::{error, info, warn};
 
-pub mod wire {
-    include!(concat!(env!("OUT_DIR"), "/fgg.wire.rs"));
-}
-
-use wire::{JsonResponse, RpcRequest};
-
 #[derive(Debug, Parser)]
-#[command(name = "fgg-worker", about = "gRPC→HTTP worker for FastAPI behind Granian")]
+#[command(
+    name = "fgg-worker",
+    about = "Rust gRPC worker: unary RPCs → HTTP → Granian/FastAPI (no Python gRPC)"
+)]
 struct Args {
     #[arg(long, env = "FGG_BIND", default_value = "0.0.0.0:50051")]
     bind: SocketAddr,
@@ -39,28 +43,6 @@ struct Args {
 
     #[arg(long, env = "FGG_BINDINGS")]
     bindings: PathBuf,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-struct BindingsFile {
-    package: String,
-    service: String,
-    #[serde(default)]
-    route: Vec<RouteBinding>,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Deserialize, Clone)]
-struct RouteBinding {
-    rpc: String,
-    http_method: String,
-    path: String,
-    #[serde(default)]
-    path_params: Vec<String>,
-    #[serde(default)]
-    query_params: Vec<String>,
-    #[serde(default)]
-    has_body: bool,
 }
 
 #[derive(Clone)]
@@ -105,13 +87,9 @@ async fn main() -> Result<()> {
         .init();
 
     let args = Args::parse();
-    let raw = std::fs::read_to_string(&args.bindings)
-        .with_context(|| format!("read bindings {}", args.bindings.display()))?;
-    let file: BindingsFile = toml::from_str(&raw).context("parse bindings.toml")?;
-    let mut routes = HashMap::new();
-    for r in file.route {
-        routes.insert(r.rpc.clone(), r);
-    }
+    let file = load_bindings(&args.bindings)
+        .with_context(|| format!("load bindings {}", args.bindings.display()))?;
+    let routes = file.routes_by_rpc();
     info!(
         package = %file.package,
         service = %file.service,
@@ -179,39 +157,29 @@ async fn process(
         .ok_or_else(|| anyhow!("unknown path {path}, expected {prefix}/Rpc"))?
         .to_string();
 
-    let binding = state
-        .routes
-        .get(&rpc)
-        .ok_or_else(|| anyhow!("rpc {rpc} not in bindings"))?
-        .clone();
-
     let collected = req.collect().await?.to_bytes();
-    let proto_bytes = decode_grpc_payload(&collected)?;
+    let proto_bytes = decode_grpc_payload(&collected).map_err(|e| anyhow!(e))?;
     let rpc_req = RpcRequest::decode(proto_bytes).context("decode RpcRequest")?;
 
-    let http_path = fill_path(&binding.path, &rpc_req.path);
-    let mut uri_str = format!("{}{}", state.upstream, http_path);
-    if !rpc_req.query.is_empty() {
+    let target = build_http_target(&state.routes, &rpc, &rpc_req).map_err(|e| anyhow!(e))?;
+
+    let mut uri_str = format!("{}{}", state.upstream, target.path);
+    if !target.query.is_empty() {
         uri_str.push('?');
-        uri_str.push_str(&serde_urlencoded(&rpc_req.query));
+        uri_str.push_str(&target.query);
     }
     let uri: Uri = uri_str.parse().context("parse upstream uri")?;
-
-    let method = Method::from_bytes(binding.http_method.as_bytes())
-        .unwrap_or(Method::GET);
-
-    let body_bytes = if binding.has_body {
-        Bytes::from(rpc_req.body.clone())
-    } else {
-        Bytes::new()
-    };
+    let method = Method::from_bytes(target.method.as_bytes()).unwrap_or(Method::GET);
+    let body_bytes = Bytes::from(target.body);
 
     let mut builder = Request::builder().method(method).uri(uri);
-    if binding.has_body && !body_bytes.is_empty() {
+    if target.has_body && !body_bytes.is_empty() {
         builder = builder.header(hyper::header::CONTENT_TYPE, "application/json");
         builder = builder.header(hyper::header::CONTENT_LENGTH, body_bytes.len());
     }
-    let upstream_req = builder.body(Full::new(body_bytes)).context("build upstream req")?;
+    let upstream_req = builder
+        .body(Full::new(body_bytes))
+        .context("build upstream req")?;
 
     let upstream = state
         .client
@@ -235,60 +203,8 @@ async fn process(
     grpc_message(msg)
 }
 
-fn fill_path(template: &str, params: &HashMap<String, String>) -> String {
-    let mut path = template.to_string();
-    for (k, v) in params {
-        path = path.replace(&format!("{{{k}}}"), &urlencoding_encode(v));
-    }
-    path
-}
-
-fn urlencoding_encode(s: &str) -> String {
-    let mut out = String::new();
-    for b in s.as_bytes() {
-        match *b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(*b as char)
-            }
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
-}
-
-fn serde_urlencoded(map: &HashMap<String, String>) -> String {
-    map.iter()
-        .map(|(k, v)| format!("{}={}", urlencoding_encode(k), urlencoding_encode(v)))
-        .collect::<Vec<_>>()
-        .join("&")
-}
-
-fn decode_grpc_payload(buf: &Bytes) -> Result<&[u8]> {
-    if buf.len() < 5 {
-        return Err(anyhow!("grpc frame too short"));
-    }
-    if buf[0] != 0 {
-        return Err(anyhow!("compressed grpc messages not supported"));
-    }
-    let len = (&buf[1..5]).get_u32() as usize;
-    if buf.len() < 5 + len {
-        return Err(anyhow!("grpc frame truncated"));
-    }
-    Ok(&buf[5..5 + len])
-}
-
-fn encode_grpc_payload(msg: &impl Message) -> Result<Bytes> {
-    let mut body = BytesMut::new();
-    body.put_u8(0);
-    let mut proto = BytesMut::new();
-    msg.encode(&mut proto)?;
-    body.put_u32(proto.len() as u32);
-    body.extend_from_slice(&proto);
-    Ok(body.freeze())
-}
-
 fn grpc_message(msg: JsonResponse) -> Result<Response<GrpcUnaryBody>> {
-    let data = encode_grpc_payload(&msg)?;
+    let data = encode_grpc_payload(&msg).map_err(|e| anyhow!(e))?;
     let mut trailers = http::HeaderMap::new();
     trailers.insert("grpc-status", http::HeaderValue::from_static("0"));
     Response::builder()

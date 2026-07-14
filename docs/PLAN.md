@@ -5,17 +5,20 @@
 ## Архитектура
 
 ```
-gRPC → fgg-worker (Rust) → HTTP → Granian → FastAPI
+HTTP  → Granian (Python) → FastAPI
+gRPC  → fgg-worker (Rust) → HTTP → Granian → FastAPI
 ```
 
-- Python: только генерация `service.proto` + `bindings.toml`
-- Rust worker: convert + proxy
-- Granian: ASGI для приложения
+- Python: schema + Granian orchestrator — **без** `import grpc` / grpcio
+- Rust `fgg-worker` / `fgg-core`: весь gRPC
+- Coverage **≥ 93%** для Python и Rust `fgg-core`
 
 ## В скоупе
 
-JSON unary routes, path/query/body, schema gen, Go/Python gRPC-клиенты.
+JSON unary routes, path/query/body, schema gen, Go gRPC-клиенты,  
+`fgg serve`, Rust worker.
 
 ## Вне скоупа
 
-Cookies, redirects, FileResponse, StreamingResponse, WebSocket.
+Cookies, redirects, FileResponse, StreamingResponse, WebSocket,  
+Python gRPC (`grpcio`).

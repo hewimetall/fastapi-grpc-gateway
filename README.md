@@ -1,45 +1,30 @@
 # fastapi-grpc-gateway
 
-Делает так, чтобы к обычному FastAPI можно было ходить ещё и по **gRPC**.
+Обычный FastAPI по HTTP (Granian) и по **gRPC** (Rust). В Python **нет** `import grpc`.
 
 ```
-HTTP  → Granian → FastAPI
-gRPC  → Rust worker → (тот же) Granian → FastAPI
+HTTP  → Granian (Python)  → FastAPI
+gRPC  → fgg-worker (Rust) → HTTP → Granian → FastAPI
 ```
 
-FastAPI остаётся обычным. Worker только переводит gRPC в HTTP.
+**Как это работает:** [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md)
 
 ---
 
 ## С чего начать
 
-**Прочитайте:** [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md) — простым языком: схема, шаги, примеры.
-
-## За 30 секунд
-
 ```bash
-pip install -e ".[dev]"
-cargo build -p fgg-worker
-
-# 1) сгенерировать схемы из FastAPI-роутов
-PYTHONPATH=examples fgg generate --app hello_app:app --out ./gen
-
-# 2) HTTP
-cd examples && granian --interface asgi --host 127.0.0.1 --port 8000 hello_app:app
-
-# 3) gRPC worker (другой терминал)
-./target/debug/fgg-worker \
-  --bind 127.0.0.1:50051 \
-  --upstream http://127.0.0.1:8000 \
-  --bindings ./gen/bindings.toml
+uv add fastapi-grpc-gateway
+# + бинарник fgg-worker с GitHub Release / `cargo build -p fgg-worker`
 ```
 
-Проверка:
+### Один вход
 
-- HTTP: `curl http://127.0.0.1:8000/api/hello`
-- gRPC (Go): `bash scripts/test_go_client.sh`
-
-Или одной командой: `bash scripts/run_example.sh`
+```bash
+cargo build -p fgg-worker
+export FGG_WORKER=./target/debug/fgg-worker
+uv run fgg serve --app app:app --http-port 8000 --grpc-bind 127.0.0.1:50051 --out ./gen
+```
 
 ---
 
@@ -47,39 +32,24 @@ cd examples && granian --interface asgi --host 127.0.0.1 --port 8000 hello_app:a
 
 | Компонент | Роль |
 |-----------|------|
-| `examples/hello_app.py` | Ваше FastAPI-приложение |
-| `fgg generate` | Пишет `gen/service.proto` + `gen/bindings.toml` |
-| Granian | HTTP-сервер для FastAPI |
-| `fgg-worker` | gRPC-сервер → HTTP на Granian |
-| `clients/go` | Пример официального Go gRPC-клиента |
+| `fgg serve` | Granian HTTP + spawn Rust `fgg-worker` |
+| `fgg generate` | proto + bindings |
+| `fgg-worker` / `fgg-core` | **весь** gRPC (Rust) |
+| ваше `app.py` | FastAPI-роуты |
 
 ---
 
-## Тесты
+## Для контрибьюторов
 
 ```bash
+uv sync --extra dev
 cargo build -p fgg-worker
-pip install -e ".[dev]"
-pytest                          # schema + python e2e
-bash scripts/test_go_client.sh  # Go grpc-go клиент
+uv run pytest
+bash scripts/test_rust_coverage.sh
+bash scripts/test_go_client.sh
 ```
 
-## Сборка Python wheel
-
-Локально:
-
-```bash
-pip install build
-python -m build
-# → dist/fastapi_grpc_gateway-*.whl
-```
-
-CI:
-
-- Сборка на каждый PR/push: [`.github/workflows/python-wheel.yml`](.github/workflows/python-wheel.yml)
-- Релиз по тегу `v*`: GitHub Release + PyPI — [`.github/workflows/python-release.yml`](.github/workflows/python-release.yml)
-
-Как поставить в проект и как выложить релиз: **[docs/PUBLISHING.md](docs/PUBLISHING.md)**.
+Coverage: Python **≥ 93%**, Rust `fgg-core` **≥ 93%**.
 
 ---
 
@@ -87,6 +57,6 @@ CI:
 
 | Файл | Содержание |
 |------|------------|
-| [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md) | Как работает, простыми словами |
-| [docs/PUBLISHING.md](docs/PUBLISHING.md) | pip / PyPI / GitHub Releases |
-| [docs/PLAN.md](docs/PLAN.md) | Краткий план / границы скоупа |
+| [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md) | Как работает |
+| [docs/PUBLISHING.md](docs/PUBLISHING.md) | uv / pip / Releases |
+| [docs/PLAN.md](docs/PLAN.md) | Скоуп |

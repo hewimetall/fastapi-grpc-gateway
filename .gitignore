@@ -8,10 +8,14 @@ build/
 .venv/
 venv/
 /gen/
+.fgg/
 target/
 dist/
 *.pb
 .mypy_cache/
 .ruff_cache/
-/Cargo.lock
+.coverage
+coverage.json
+htmlcov/
+.coverage.*
 

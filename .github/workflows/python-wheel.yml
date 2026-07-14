@@ -18,21 +18,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
         with:
-          python-version: "3.12"
+          enable-cache: true
 
-      - name: Install build tooling
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install build twine
+      - name: Set up Python
+        run: uv python install 3.12
 
       - name: Build wheel and sdist
-        run: python -m build --outdir dist
+        run: uv build --out-dir dist
 
       - name: Check package metadata
-        run: twine check dist/*
+        run: |
+          uvx twine check dist/*
 
       - name: Show artifacts
         run: ls -la dist/
@@ -47,16 +46,18 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # Optional smoke: install the built wheel and import the package
   smoke-install:
     name: Smoke install wheel
     needs: build-wheel
     runs-on: ubuntu-latest
     steps:
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
         with:
-          python-version: "3.12"
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
 
       - name: Download wheels
         uses: actions/download-artifact@v4
@@ -64,12 +65,50 @@ jobs:
           name: python-wheels
           path: dist
 
-      - name: Install wheel
+      - name: Install wheel and smoke check
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install dist/*.whl
+          WHL=$(ls dist/*.whl | head -1)
+          uv venv
+          uv pip install "$WHL"
+          uv run python -c "from fastapi_grpc_gateway import generate_schema, iter_json_routes; print('ok')"
+          uv run fgg --help
 
-      - name: Import and CLI check
+  test-coverage:
+    name: Pytest coverage ≥93%
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Sync and test
         run: |
-          python -c "from fastapi_grpc_gateway import generate_schema, iter_json_routes; print('ok')"
-          fgg --help
+          uv sync --extra dev --frozen
+          uv run pytest
+
+  rust-coverage:
+    name: Rust fgg-core coverage ≥93%
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install protoc
+        run: |
+          curl -sL -o /tmp/protoc.zip \
+            https://github.com/protocolbuffers/protobuf/releases/download/v28.3/protoc-28.3-linux-x86_64.zip
+          sudo unzip -o /tmp/protoc.zip -d /usr/local
+          protoc --version
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Coverage gate
+        run: cargo llvm-cov -p fgg-core --lib --fail-under-lines 93 --summary-only
