@@ -3,7 +3,7 @@
 Minimal Python + Rust worker:
 
 ```
-gRPC client → fgg-worker (Rust) → HTTP → Granian → FastAPI app
+gRPC client (Go/Python/…) → fgg-worker (Rust) → HTTP → Granian → FastAPI app
 ```
 
 Python only walks routes and emits `service.proto` + `bindings.toml`.  
@@ -29,7 +29,12 @@ cd examples && granian --interface asgi --host 127.0.0.1 --port 8000 hello_app:a
   --bindings ./gen/bindings.toml
 ```
 
-Or: `bash scripts/run_example.sh`
+## Go client test
+
+```bash
+bash scripts/test_go_client.sh
+# PASS: TestGetHello / TestGetUser / TestPostCreateItem (grpc-go)
+```
 
 ## Tests
 
@@ -37,6 +42,7 @@ Or: `bash scripts/run_example.sh`
 cargo build -p fgg-worker
 pip install -e ".[dev]"
 pytest
+bash scripts/test_go_client.sh
 ```
 
 See [`docs/PLAN.md`](docs/PLAN.md).
