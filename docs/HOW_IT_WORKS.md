@@ -2,148 +2,92 @@
 
 ## Одна картинка
 
-Обычное FastAPI-приложение. Один процесс (`fgg serve`) принимает и HTTP, и gRPC:
+Обычное FastAPI-приложение. HTTP — Granian, gRPC — **только Rust** (`fgg-worker`):
 
 ```
-                 ┌──────────────────────────────────────┐
- HTTP клиент ───►│ Granian embed (HTTP)                 │
-                 │                                      ├──► FastAPI (ASGI)
- gRPC клиент ───►│ gRPC adapter → ASGI (in-process)     │
-                 └──────────────────────────────────────┘
+                 ┌─────────────────────┐
+ HTTP клиент ───►│ Granian (Python)    │──► FastAPI
+                 └─────────────────────┘
+                           ▲
+                           │ HTTP
+                 ┌─────────────────────┐
+ gRPC клиент ───►│ fgg-worker (Rust)   │
+                 └─────────────────────┘
 ```
 
-**Важно:** gRPC **не** ходит на localhost HTTP.  
-Адаптер прямо вызывает тот же ASGI `app(scope, receive, send)`.
+**В Python нет `import grpc`.** gRPC-стек целиком вне Python.
+
+`fgg serve` поднимает Granian и спавнит Rust `fgg-worker`.
 
 ---
 
-## Три части
+## Части
 
-| Часть | Что делает |
-|-------|------------|
-| Ваше приложение | Обычные FastAPI-роуты |
-| `fgg generate` | Смотрит роуты → `service.proto` + `bindings.toml` |
-| `fgg serve` | Granian (HTTP) + gRPC→ASGI в одном процессе |
+| Часть | Язык | Что делает |
+|-------|------|------------|
+| Ваше приложение | Python / FastAPI | Обычные роуты |
+| `fgg generate` / schema | Python | `service.proto` + `bindings.toml` |
+| Granian | Python+Rust | HTTP ASGI |
+| `fgg-worker` | **Rust** | gRPC → HTTP → Granian |
+| `fgg-core` | **Rust** | bindings / frames / mapping |
 
 ---
 
 ## Шаг за шагом: вызов gRPC
 
-Пример: Go-клиент вызывает `GetUser` с `user_id = 7`.
-
-### 1. Клиент шлёт gRPC
-
-```
-RPC:  fastapi_grpc.API / GetUser
-тело: RpcRequest { path: { "user_id": "7" } }
-```
-
-### 2. Сервер смотрит bindings
-
-```toml
-[[route]]
-rpc = "GetUser"
-http_method = "GET"
-path = "/api/users/{user_id}"
-```
-
-### 3. In-process ASGI
-
-Собирается ASGI scope для `GET /api/users/7` и вызывается ваш хендлер — **без** HTTP-прокси.
-
-### 4. Ответ в gRPC
-
-```
-JsonResponse { status_code: 200, body: <JSON> }
-```
+1. Клиент шлёт gRPC на `fgg-worker`.
+2. Worker читает `bindings.toml`, собирает HTTP-запрос.
+3. Worker дергает Granian (`GET /api/users/7` и т.п.).
+4. Ответ упаковывается в `JsonResponse` и уходит по gRPC.
 
 ---
 
 ## Как запустить
 
 ```bash
-uv add fastapi-grpc-gateway
+uv sync --extra dev
+cargo build -p fgg-worker
 uv run fgg serve --app app:app --http-port 8000 --grpc-bind 127.0.0.1:50051 --out ./gen
 ```
 
-Один процесс:
-
-- HTTP: `http://127.0.0.1:8000`
-- gRPC: `127.0.0.1:50051`
-- схемы: `./gen/service.proto`, `./gen/bindings.toml`
-
-Только схемы (без сервера):
+Только схемы:
 
 ```bash
-fgg generate --app app:app --out ./gen
+uv run fgg generate --app app:app --out ./gen
 ```
 
 ---
 
 ## Что писать в приложении
 
-Ничего особенного — обычный FastAPI:
-
-```python
-from fastapi import FastAPI, Body
-from pydantic import BaseModel
-
-app = FastAPI()
-
-@app.get("/api/hello")
-async def hello():
-    return {"message": "hello"}
-
-@app.get("/api/users/{user_id}")
-async def get_user(user_id: int):
-    return {"user_id": user_id}
-
-class Item(BaseModel):
-    name: str
-    price: float = 0
-
-@app.post("/api/items")
-async def create_item(item: Item = Body(...)):
-    return item
-```
+Обычный FastAPI — без gRPC-кода.
 
 ---
 
 ## Как вызывать из Go
 
-```go
-conn, _ := grpc.Dial("127.0.0.1:50051",
-    grpc.WithTransportCredentials(insecure.NewCredentials()))
-client := pb.NewAPIClient(conn)
-
-resp, _ := client.GetHello(ctx, &pb.RpcRequest{})
-resp, _ := client.GetUser(ctx, &pb.RpcRequest{
-    Path: map[string]string{"user_id": "7"},
-})
-```
-
-Готовый тест: `clients/go/client_test.go` / `bash scripts/test_go_client.sh`.
+См. `clients/go` / `bash scripts/test_go_client.sh`.  
+Python gRPC-клиент в этом репозитории **не** используется.
 
 ---
 
 ## Чего нет (намеренно)
 
-- Cookies / сессии
-- Redirect / File / Streaming ответы
-- Отдельный Rust HTTP-прокси на Granian (убрали: был внешний hop)
+- `import grpc` / `grpcio` в Python-пакете
+- Cookies / redirects / File / Streaming
 
 ---
 
 ## Файлы
 
 ```
-fastapi_grpc_gateway/   # generate + serve (Granian embed + gRPC→ASGI)
-crates/fgg-core/        # Rust protocol core (bindings / frames / mapping)
+fastapi_grpc_gateway/   # schema + Granian orchestrator (без gRPC)
+crates/fgg-core/        # Rust protocol core
+crates/fgg-worker/      # Rust gRPC server
 examples/hello_app.py
 clients/go/
-tests/                  # Python unit + e2e; coverage ≥ 93%
+tests/
 scripts/
-docs/HOW_IT_WORKS.md
 ```
 
 ---
@@ -152,23 +96,21 @@ docs/HOW_IT_WORKS.md
 
 ```bash
 uv sync --extra dev
+cargo build -p fgg-worker
 uv run pytest
-bash scripts/test_rust_coverage.sh
+bash scripts/test_rust_coverage.sh   # fgg-core ≥ 93%
+bash scripts/test_go_client.sh       # gRPC e2e через Go
 ```
 
 Пороги:
-- Python `fastapi_grpc_gateway`: **≥ 93%** (без `wire_pb2.py`)
-- Rust `crates/fgg-core`: **≥ 93%** lines (`cargo llvm-cov --fail-under-lines 93`)
-
-`fgg-core` — protocol core (bindings, gRPC frames, path → HTTP target), без сетевого hop.
-
-Go e2e: `bash scripts/test_go_client.sh`.
+- Python: **≥ 93%**
+- Rust `fgg-core`: **≥ 93%**
 
 ---
 
 ## Коротко
 
 1. Пишете FastAPI.  
-2. `fgg serve` поднимает HTTP (Granian) и gRPC.  
-3. gRPC вызывает ASGI **в том же процессе**.  
-4. Клиенты ходят по сгенерированному proto.
+2. `fgg serve` = Granian + Rust worker.  
+3. gRPC только в Rust.  
+4. Клиенты ходят по сгенерированному proto (Go и др.).

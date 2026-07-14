@@ -1,0 +1,28 @@
+[package]
+name = "fgg-worker"
+version = "0.2.0"
+edition = "2021"
+description = "gRPC server (Rust): RpcRequest → HTTP → Granian/FastAPI — no Python gRPC"
+rust-version = "1.83"
+license = "MIT"
+
+[[bin]]
+name = "fgg-worker"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+bytes = "1"
+clap = { version = "=4.5.23", features = ["derive", "env"] }
+fgg-core = { path = "../fgg-core" }
+http = "1"
+http-body-util = "0.1"
+hyper = { version = "1.5", features = ["http1", "http2", "server", "client"] }
+hyper-util = { version = "0.1.10", features = ["tokio", "http1", "http2", "client", "client-legacy"] }
+prost = "0.13.4"
+tokio = { version = "1.42", features = ["macros", "rt-multi-thread", "net", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tokio = { version = "1.42", features = ["macros", "rt-multi-thread", "net", "io-util"] }

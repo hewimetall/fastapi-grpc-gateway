@@ -1,4 +1,4 @@
-"""CLI: fgg generate | fgg serve — schema gen + in-process Granian+gRPC server."""
+"""CLI: fgg generate | fgg serve — schema gen + Granian + Rust fgg-worker."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def main(argv: list[str] | None = None) -> None:
 
     serve = sub.add_parser(
         "serve",
-        help="One process: Granian HTTP + gRPC→ASGI (no external HTTP hop)",
+        help="Granian HTTP + Rust fgg-worker gRPC (no Python gRPC)",
     )
     serve.add_argument("--app", required=True)
     serve.add_argument("--http-host", default="127.0.0.1")
@@ -39,7 +39,7 @@ def main(argv: list[str] | None = None) -> None:
     serve.add_argument(
         "--out",
         default=None,
-        help="Optional directory to write service.proto + bindings.toml",
+        help="Directory to write service.proto + bindings.toml",
     )
     serve.add_argument(
         "--bindings",
@@ -47,9 +47,14 @@ def main(argv: list[str] | None = None) -> None:
         help="Optional bindings.toml (default: generated from app routes)",
     )
     serve.add_argument(
-        "--no-http",
+        "--no-grpc",
         action="store_true",
-        help="Only serve gRPC (still calls ASGI in-process)",
+        help="Only Granian HTTP (do not spawn Rust fgg-worker)",
+    )
+    serve.add_argument(
+        "--worker",
+        default=None,
+        help="Path to fgg-worker binary (or set FGG_WORKER)",
     )
 
     args = parser.parse_args(argv)
@@ -80,7 +85,9 @@ def main(argv: list[str] | None = None) -> None:
             service=args.service,
             bindings_path=Path(args.bindings) if args.bindings else None,
             schema_out=Path(args.out) if args.out else None,
-            enable_http=not args.no_http,
+            enable_http=True,
+            enable_grpc=not args.no_grpc,
+            worker_bin=Path(args.worker) if args.worker else None,
         )
         return
 

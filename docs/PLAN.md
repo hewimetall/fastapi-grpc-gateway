@@ -5,24 +5,20 @@
 ## Архитектура
 
 ```
-HTTP  → Granian embed ─┐
-                       ├─► FastAPI (один ASGI app, один процесс)
-gRPC  → ASGI adapter ──┘
+HTTP  → Granian (Python) → FastAPI
+gRPC  → fgg-worker (Rust) → HTTP → Granian → FastAPI
 ```
 
-- `fgg serve`: кастомный процесс вокруг Granian embed + gRPC→ASGI
-- `fgg generate`: `service.proto` + `bindings.toml`
-- `crates/fgg-core`: Rust protocol core (bindings / gRPC frames / mapping)
-- Без внешнего HTTP hop (localhost proxy)
-- Разработка через **uv** (`uv.lock`, `uv sync --extra dev`)
-- Coverage **≥ 93%** для Python и Rust
+- Python: schema + Granian orchestrator — **без** `import grpc` / grpcio
+- Rust `fgg-worker` / `fgg-core`: весь gRPC
+- Coverage **≥ 93%** для Python и Rust `fgg-core`
 
 ## В скоупе
 
-JSON unary routes, path/query/body, schema gen, Go/Python gRPC-клиенты,  
-`fgg serve` (Granian embed + gRPC→ASGI), Rust `fgg-core`,  
-тесты с **coverage ≥ 93%** (Python + Rust).
+JSON unary routes, path/query/body, schema gen, Go gRPC-клиенты,  
+`fgg serve`, Rust worker.
 
 ## Вне скоупа
 
-Cookies, redirects, FileResponse, StreamingResponse, WebSocket.
+Cookies, redirects, FileResponse, StreamingResponse, WebSocket,  
+Python gRPC (`grpcio`).

@@ -1,4 +1,4 @@
-"""Minimal FastAPI helpers: schema gen + in-process Granian/gRPC serve."""
+"""FastAPI schema gen + Granian orchestrator (gRPC is Rust-only)."""
 
 from fastapi_grpc_gateway.schema import generate_schema, iter_json_routes
 

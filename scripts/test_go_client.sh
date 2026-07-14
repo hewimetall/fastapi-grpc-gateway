@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end: fgg serve (in-process) + Go gRPC client
+# End-to-end: Granian + Rust fgg-worker + Go gRPC client (no Python gRPC)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "${ROOT}"
@@ -12,10 +12,11 @@ GRPC_PORT="${GRPC_PORT:-15051}"
 
 mkdir -p "${GEN}"
 uv sync --extra dev --frozen
+cargo build -p fgg-worker
+WORKER="${ROOT}/target/debug/fgg-worker"
 
 uv run fgg generate --app hello_app:app --out "${GEN}"
 
-# regenerate Go stubs from current proto
 mkdir -p "${ROOT}/clients/go/gen"
 protoc -I "${GEN}" \
   --go_out="${ROOT}/clients/go/gen" --go_opt=paths=source_relative \
@@ -28,6 +29,7 @@ uv run fgg serve \
   --http-port "${HTTP_PORT}" \
   --grpc-bind "127.0.0.1:${GRPC_PORT}" \
   --out "${GEN}" \
+  --worker "${WORKER}" \
   >/tmp/fgg-serve.log 2>&1 &
 SERVE_PID=$!
 

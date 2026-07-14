@@ -1,15 +1,12 @@
-"""CLI coverage: generate + serve dispatch."""
+"""CLI coverage: generate + serve dispatch (no Python gRPC)."""
 
 from __future__ import annotations
 
-import os
-import sys
 from pathlib import Path
 
 import pytest
 
 from fastapi_grpc_gateway import cli
-
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -38,9 +35,7 @@ def test_generate_cli(tmp_path, monkeypatch, capsys):
     assert (tmp_path / "bindings.toml").exists()
     out = capsys.readouterr().out
     assert "routes:" in out
-    assert "package demo" in (tmp_path / "service.proto").read_text() or "package demo;" in (
-        tmp_path / "service.proto"
-    ).read_text()
+    assert "package demo;" in (tmp_path / "service.proto").read_text()
 
 
 def test_serve_cli_dispatches(monkeypatch, tmp_path):
@@ -55,6 +50,8 @@ def test_serve_cli_dispatches(monkeypatch, tmp_path):
 
     bindings = tmp_path / "bindings.toml"
     bindings.write_text('package = "fastapi_grpc"\nservice = "API"\n')
+    worker = tmp_path / "fgg-worker"
+    worker.write_text("x")
 
     cli.main(
         [
@@ -71,11 +68,13 @@ def test_serve_cli_dispatches(monkeypatch, tmp_path):
             str(tmp_path / "gen"),
             "--bindings",
             str(bindings),
-            "--no-http",
+            "--no-grpc",
+            "--worker",
+            str(worker),
         ]
     )
     assert called["app"] is not None
     assert called["kwargs"]["http_port"] == 9000
-    assert called["kwargs"]["enable_http"] is False
+    assert called["kwargs"]["enable_grpc"] is False
     assert called["kwargs"]["bindings_path"] == bindings
-    assert called["kwargs"]["schema_out"] == tmp_path / "gen"
+    assert called["kwargs"]["worker_bin"] == worker

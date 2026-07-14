@@ -1,15 +1,18 @@
-"""Custom Granian-based process: HTTP (Granian embed) + gRPC→ASGI in-process."""
+"""Orchestrate Granian (HTTP) + Rust fgg-worker (gRPC). No Python gRPC."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import shutil
+import signal
 import socket
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
 
-from fastapi_grpc_gateway.grpc_server import bindings_from_mapping, start_grpc_server
 from fastapi_grpc_gateway.schema import generate_schema
 
 log = logging.getLogger("fgg.serve")
@@ -26,12 +29,36 @@ def _wait_tcp(host: str, port: int, timeout: float = 30.0) -> None:
     raise TimeoutError(f"{host}:{port} did not open")
 
 
-def _parse_bindings_toml(text: str) -> dict[str, Any]:
-    try:
-        import tomllib
-    except ModuleNotFoundError:  # pragma: no cover
-        import tomli as tomllib  # type: ignore
-    return tomllib.loads(text)
+def _parse_host_port(bind: str) -> tuple[str, int]:
+    host, _, port_s = bind.rpartition(":")
+    return (host or "127.0.0.1", int(port_s))
+
+
+def find_worker_binary() -> Path:
+    """Resolve fgg-worker: FGG_WORKER env, PATH, or local cargo target."""
+    env = os.environ.get("FGG_WORKER")
+    if env:
+        path = Path(env)
+        if path.is_file():
+            return path
+        raise FileNotFoundError(f"FGG_WORKER={env} not found")
+
+    which = shutil.which("fgg-worker")
+    if which:
+        return Path(which)
+
+    root = Path(__file__).resolve().parents[1]
+    for candidate in (
+        root / "target" / "release" / "fgg-worker",
+        root / "target" / "debug" / "fgg-worker",
+    ):
+        if candidate.is_file():
+            return candidate
+
+    raise FileNotFoundError(
+        "fgg-worker not found; set FGG_WORKER, install binary on PATH, "
+        "or run `cargo build -p fgg-worker`"
+    )
 
 
 async def serve_app(
@@ -45,13 +72,13 @@ async def serve_app(
     bindings_path: Path | None = None,
     schema_out: Path | None = None,
     enable_http: bool = True,
+    enable_grpc: bool = True,
     stop_event: asyncio.Event | None = None,
+    worker_bin: Path | None = None,
 ) -> None:
     """
-    One process, one ASGI app instance:
-
-      HTTP  → Granian embed → FastAPI
-      gRPC  → adapter → same FastAPI (ASGI call, no localhost HTTP)
+    HTTP via Granian embed (Python/ASGI).
+    gRPC via Rust fgg-worker subprocess (no ``import grpc`` in Python).
     """
     bundle = generate_schema(app, package=package, service=service)
     if schema_out is not None:
@@ -61,21 +88,14 @@ async def serve_app(
         log.info("wrote schema to %s", schema_out)
 
     if bindings_path is not None:
-        data = _parse_bindings_toml(bindings_path.read_text(encoding="utf-8"))
+        bindings_file = bindings_path
     else:
-        data = _parse_bindings_toml(bundle.bindings_toml)
-
-    pkg, svc, routes = bindings_from_mapping(data)
-    http_server = (http_host, http_port)
-
-    grpc = await start_grpc_server(
-        app,
-        package=pkg,
-        service=svc,
-        routes=routes,
-        bind=grpc_bind,
-        http_server=http_server,
-    )
+        out = schema_out or Path.cwd() / ".fgg"
+        out.mkdir(parents=True, exist_ok=True)
+        bindings_file = out / "bindings.toml"
+        bindings_file.write_text(bundle.bindings_toml, encoding="utf-8")
+        if schema_out is None:
+            (out / "service.proto").write_text(bundle.proto_source, encoding="utf-8")
 
     granian_server = None
     http_task = None
@@ -93,7 +113,28 @@ async def serve_app(
         await asyncio.to_thread(_wait_tcp, http_host, http_port)
         log.info("HTTP (Granian embed) on http://%s:%d", http_host, http_port)
 
-    log.info("gRPC on grpc://%s (in-process ASGI)", grpc_bind)
+    worker_proc: subprocess.Popen[bytes] | None = None
+    if enable_grpc:
+        if not enable_http:
+            raise RuntimeError("gRPC worker needs HTTP upstream (enable_http=True)")
+        binary = worker_bin or find_worker_binary()
+        grpc_host, grpc_port = _parse_host_port(grpc_bind)
+        upstream = f"http://{http_host}:{http_port}"
+        worker_proc = subprocess.Popen(
+            [
+                str(binary),
+                "--bind",
+                f"{grpc_host}:{grpc_port}",
+                "--upstream",
+                upstream,
+                "--bindings",
+                str(bindings_file),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        await asyncio.to_thread(_wait_tcp, grpc_host, grpc_port)
+        log.info("gRPC (Rust fgg-worker) on grpc://%s → %s", grpc_bind, upstream)
 
     stop = stop_event if stop_event is not None else asyncio.Event()
 
@@ -103,8 +144,6 @@ async def serve_app(
     loop = asyncio.get_running_loop()
     for sig_name in ("SIGINT", "SIGTERM"):
         try:
-            import signal
-
             loop.add_signal_handler(getattr(signal, sig_name), _handle_signal)
         except (NotImplementedError, RuntimeError, ValueError):
             pass
@@ -113,7 +152,12 @@ async def serve_app(
         await stop.wait()
     finally:
         log.info("shutting down")
-        await grpc.stop(grace=5)
+        if worker_proc is not None:
+            worker_proc.terminate()
+            try:
+                await asyncio.to_thread(worker_proc.wait, 5)
+            except Exception:  # noqa: BLE001
+                worker_proc.kill()
         if granian_server is not None:
             granian_server.stop()
         if http_task is not None:
@@ -123,10 +167,7 @@ async def serve_app(
                 http_task.cancel()
 
 
-def run_serve(
-    app: Any,
-    **kwargs: Any,
-) -> None:
+def run_serve(app: Any, **kwargs: Any) -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
