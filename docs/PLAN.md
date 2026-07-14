@@ -13,6 +13,7 @@ gRPC  → ASGI adapter ──┘
 - `fgg serve`: кастомный процесс вокруг Granian embed + gRPC→ASGI
 - `fgg generate`: `service.proto` + `bindings.toml`
 - Без внешнего HTTP hop (localhost proxy)
+- Разработка через **uv** (`uv.lock`, `uv sync --extra dev`)
 
 ## В скоупе
 
