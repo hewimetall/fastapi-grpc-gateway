@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/fgg-core"]
+resolver = "2"

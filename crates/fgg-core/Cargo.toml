@@ -1,0 +1,22 @@
+[package]
+name = "fgg-core"
+version = "0.2.0"
+edition = "2021"
+description = "Protocol core for fastapi-grpc-gateway: bindings, gRPC frames, path mapping"
+rust-version = "1.83"
+license = "MIT"
+
+[lib]
+name = "fgg_core"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = "1"
+bytes = "1"
+prost = "0.13.4"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+toml = "0.8.19"
+
+[build-dependencies]
+prost-build = "0.13.4"

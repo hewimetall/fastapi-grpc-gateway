@@ -138,9 +138,10 @@ resp, _ := client.GetUser(ctx, &pb.RpcRequest{
 
 ```
 fastapi_grpc_gateway/   # generate + serve (Granian embed + gRPC→ASGI)
+crates/fgg-core/        # Rust protocol core (bindings / frames / mapping)
 examples/hello_app.py
 clients/go/
-tests/                  # unit + e2e; coverage ≥ 93%
+tests/                  # Python unit + e2e; coverage ≥ 93%
 scripts/
 docs/HOW_IT_WORKS.md
 ```
@@ -152,10 +153,14 @@ docs/HOW_IT_WORKS.md
 ```bash
 uv sync --extra dev
 uv run pytest
+bash scripts/test_rust_coverage.sh
 ```
 
-Порог: **≥ 93%** line coverage по пакету `fastapi_grpc_gateway` (без `wire_pb2.py`).  
-Конфиг: `pyproject.toml` → `tool.pytest.ini_options.addopts` / `tool.coverage.*`.
+Пороги:
+- Python `fastapi_grpc_gateway`: **≥ 93%** (без `wire_pb2.py`)
+- Rust `crates/fgg-core`: **≥ 93%** lines (`cargo llvm-cov --fail-under-lines 93`)
+
+`fgg-core` — protocol core (bindings, gRPC frames, path → HTTP target), без сетевого hop.
 
 Go e2e: `bash scripts/test_go_client.sh`.
 

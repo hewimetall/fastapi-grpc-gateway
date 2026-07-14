@@ -56,24 +56,27 @@ uv run fgg serve --app app:app --http-port 8000 --grpc-bind 127.0.0.1:50051 --ou
 |-----------|------|
 | `fgg serve` | Granian (HTTP) + gRPC→ASGI in-process |
 | `fgg generate` | только proto + bindings |
+| `fgg-core` (Rust) | protocol core: bindings / frames / mapping |
 | ваше `app.py` | обычные FastAPI-роуты |
 
 ---
 
 ## Для контрибьюторов
 
-Нужен [uv](https://docs.astral.sh/uv/getting-started/installation/).
+Нужен [uv](https://docs.astral.sh/uv/getting-started/installation/) и Rust (для `fgg-core`).
 
 ```bash
 uv sync --extra dev
 uv run pytest
+bash scripts/test_rust_coverage.sh   # cargo llvm-cov ≥ 93%
 bash scripts/test_go_client.sh
 ```
 
-`uv.lock` и `.python-version` зафиксированы в репо.
+`uv.lock` / `.python-version` и `Cargo.lock` зафиксированы в репо.
 
-`pytest` требует coverage **≥ 93%** (`--cov-fail-under=93`).  
-`wire_pb2.py` из покрытия исключён.
+Пороги coverage:
+- Python (`fastapi_grpc_gateway`): **≥ 93%**
+- Rust (`fgg-core`): **≥ 93%** (`cargo llvm-cov --fail-under-lines 93`)
 
 ---
 

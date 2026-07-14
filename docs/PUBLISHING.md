@@ -34,7 +34,8 @@ uv run fgg serve --app app:app --http-port 8000 --grpc-bind 127.0.0.1:50051 --ou
 
 ```bash
 uv sync --extra dev
-uv run pytest          # coverage ≥ 93%
+uv run pytest                              # Python coverage ≥ 93%
+bash scripts/test_rust_coverage.sh         # Rust fgg-core ≥ 93%
 uv run fgg serve --app hello_app:app --out ./gen
 ```
 
