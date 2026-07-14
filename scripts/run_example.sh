@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "${ROOT}"
 export PYTHONPATH="${ROOT}/examples:${PYTHONPATH:-}"
 
 GEN="${ROOT}/gen"
 mkdir -p "${GEN}"
 
-python3 -m pip install -e "${ROOT}[dev]" -q
+uv sync --extra dev --frozen
+export PYTHONPATH="${ROOT}/examples:${PYTHONPATH:-}"
 
-# One process: Granian HTTP + in-process gRPC→ASGI
-python3 -m fastapi_grpc_gateway.cli serve \
+uv run fgg serve \
   --app hello_app:app \
   --http-host 127.0.0.1 \
   --http-port 8000 \

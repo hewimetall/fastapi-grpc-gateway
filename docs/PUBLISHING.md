@@ -1,12 +1,12 @@
 # Как поставить пакет и как публиковать
 
-## В свой проект
+## В свой проект (uv)
 
 ```bash
-pip install fastapi-grpc-gateway
+uv add fastapi-grpc-gateway
 ```
 
-В `pyproject.toml`:
+Или в `pyproject.toml`:
 
 ```toml
 dependencies = [
@@ -17,33 +17,41 @@ dependencies = [
 Если на PyPI ещё нет — с GitHub Release:
 
 ```bash
-pip install \
-  https://github.com/hewimetall/fastapi-grpc-gateway/releases/download/v0.2.0/fastapi_grpc_gateway-0.2.0-py3-none-any.whl
+uv add 'fastapi-grpc-gateway @ https://github.com/hewimetall/fastapi-grpc-gateway/releases/download/v0.2.0/fastapi_grpc_gateway-0.2.0-py3-none-any.whl'
 ```
+
+Через pip: `pip install fastapi-grpc-gateway` (или тот же URL `.whl`).
 
 ### Дальше
 
 ```bash
-fgg serve --app app:app --http-port 8000 --grpc-bind 127.0.0.1:50051 --out ./gen
+uv run fgg serve --app app:app --http-port 8000 --grpc-bind 127.0.0.1:50051 --out ./gen
 ```
 
 Отдельный бинарник `fgg-worker` больше не нужен — gRPC и HTTP в одном `fgg serve`.
 
-Для разработки: `pip install -e ".[dev]" && pytest` (coverage ≥ 93%).
+### Разработка этого репозитория
+
+```bash
+uv sync --extra dev
+uv run pytest          # coverage ≥ 93%
+uv run fgg serve --app hello_app:app --out ./gen
+```
 
 ---
 
 ## Как выложить релиз
 
 1. Версия в `pyproject.toml` (`version = "0.2.0"`).
-2. Тег с той же версией:
+2. Обновить lock при смене зависимостей: `uv lock`.
+3. Тег с той же версией:
 
 ```bash
 git tag v0.2.0
 git push origin v0.2.0
 ```
 
-3. Workflow [`.github/workflows/python-release.yml`](../.github/workflows/python-release.yml):
+4. Workflow [`.github/workflows/python-release.yml`](../.github/workflows/python-release.yml):
    - `.whl` + sdist
    - **GitHub Release**
    - **PyPI** (Trusted Publishing; если не настроено — шаг может упасть, Release всё равно будет)

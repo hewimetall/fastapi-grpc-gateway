@@ -64,3 +64,6 @@ exclude_lines = [
     "if __name__ == .__main__.:",
     "except ModuleNotFoundError",
 ]
+
+[tool.uv]
+package = true

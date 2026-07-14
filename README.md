@@ -14,16 +14,15 @@ gRPC  → ASGI adapter ──┘   (без localhost HTTP hop)
 
 ## С чего начать
 
-```bash
-pip install fastapi-grpc-gateway
-```
-
-Если на PyPI ещё нет — с GitHub Release:
+С [uv](https://docs.astral.sh/uv/):
 
 ```bash
-pip install \
-  https://github.com/hewimetall/fastapi-grpc-gateway/releases/download/v0.2.0/fastapi_grpc_gateway-0.2.0-py3-none-any.whl
+uv add fastapi-grpc-gateway
+# или пока только с Release:
+uv add 'fastapi-grpc-gateway @ https://github.com/hewimetall/fastapi-grpc-gateway/releases/download/v0.2.0/fastapi_grpc_gateway-0.2.0-py3-none-any.whl'
 ```
+
+Через pip тоже можно: `pip install fastapi-grpc-gateway`.
 
 ### Приложение
 
@@ -41,7 +40,7 @@ async def hello():
 ### Один процесс
 
 ```bash
-fgg serve --app app:app --http-port 8000 --grpc-bind 127.0.0.1:50051 --out ./gen
+uv run fgg serve --app app:app --http-port 8000 --grpc-bind 127.0.0.1:50051 --out ./gen
 ```
 
 - HTTP: `curl http://127.0.0.1:8000/api/hello`
@@ -63,14 +62,18 @@ fgg serve --app app:app --http-port 8000 --grpc-bind 127.0.0.1:50051 --out ./gen
 
 ## Для контрибьюторов
 
+Нужен [uv](https://docs.astral.sh/uv/getting-started/installation/).
+
 ```bash
-pip install -e ".[dev]"
-pytest
+uv sync --extra dev
+uv run pytest
 bash scripts/test_go_client.sh
 ```
 
-`pytest` гоняет unit/e2e и **требует coverage ≥ 93%** (`--cov-fail-under=93`).  
-Порог задан в `pyproject.toml` (`tool.coverage.report.fail_under`). Сгенерированный `wire_pb2.py` из покрытия исключён.
+`uv.lock` и `.python-version` зафиксированы в репо.
+
+`pytest` требует coverage **≥ 93%** (`--cov-fail-under=93`).  
+`wire_pb2.py` из покрытия исключён.
 
 ---
 
@@ -79,5 +82,5 @@ bash scripts/test_go_client.sh
 | Файл | Содержание |
 |------|------------|
 | [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md) | Как работает |
-| [docs/PUBLISHING.md](docs/PUBLISHING.md) | pip / PyPI / Releases |
+| [docs/PUBLISHING.md](docs/PUBLISHING.md) | uv / pip / PyPI / Releases |
 | [docs/PLAN.md](docs/PLAN.md) | Скоуп |

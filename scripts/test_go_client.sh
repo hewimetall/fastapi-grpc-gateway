@@ -2,6 +2,7 @@
 # End-to-end: fgg serve (in-process) + Go gRPC client
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "${ROOT}"
 export PATH="${HOME}/.local/protoc/bin:$(go env GOPATH)/bin:${PATH}"
 export PYTHONPATH="${ROOT}/examples:${PYTHONPATH:-}"
 
@@ -10,9 +11,9 @@ HTTP_PORT="${HTTP_PORT:-18000}"
 GRPC_PORT="${GRPC_PORT:-15051}"
 
 mkdir -p "${GEN}"
-python3 -m pip install -e "${ROOT}[dev]" -q
+uv sync --extra dev --frozen
 
-python3 -m fastapi_grpc_gateway.cli generate --app hello_app:app --out "${GEN}"
+uv run fgg generate --app hello_app:app --out "${GEN}"
 
 # regenerate Go stubs from current proto
 mkdir -p "${ROOT}/clients/go/gen"
@@ -21,7 +22,7 @@ protoc -I "${GEN}" \
   --go-grpc_out="${ROOT}/clients/go/gen" --go-grpc_opt=paths=source_relative \
   "${GEN}/service.proto"
 
-python3 -m fastapi_grpc_gateway.cli serve \
+uv run fgg serve \
   --app hello_app:app \
   --http-host 127.0.0.1 \
   --http-port "${HTTP_PORT}" \

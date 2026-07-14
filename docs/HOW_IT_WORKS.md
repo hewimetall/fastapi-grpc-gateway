@@ -62,10 +62,8 @@ JsonResponse { status_code: 200, body: <JSON> }
 ## Как запустить
 
 ```bash
-pip install fastapi-grpc-gateway
-# или с GitHub Release, если PyPI ещё пустой
-
-fgg serve --app app:app --http-port 8000 --grpc-bind 127.0.0.1:50051 --out ./gen
+uv add fastapi-grpc-gateway
+uv run fgg serve --app app:app --http-port 8000 --grpc-bind 127.0.0.1:50051 --out ./gen
 ```
 
 Один процесс:
@@ -152,8 +150,8 @@ docs/HOW_IT_WORKS.md
 ## Тесты и coverage
 
 ```bash
-pip install -e ".[dev]"
-pytest
+uv sync --extra dev
+uv run pytest
 ```
 
 Порог: **≥ 93%** line coverage по пакету `fastapi_grpc_gateway` (без `wire_pb2.py`).  
