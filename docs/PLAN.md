@@ -1,199 +1,158 @@
-# План: gRPC methods для FastAPI (DX как fastapi-jsonrpc)
+# План (реверс): обход FastAPI → gRPC entry
 
-## Уточнённая цель
-
-**Не** HTTP→gRPC gateway / не транскодинг REST в protobuf.
-
-**Да** — тот же паттерн, что у [`fastapi-jsonrpc`](https://github.com/smagafurov/fastapi-jsonrpc):
-
-- пишешь обычные Python-функции (Pydantic, `Body`, `Depends`);
-- регистрируешь их декоратором как RPC-методы;
-- транспорт и диспатч — в Rust (аналог «uwsgi»-слоя → **Granian-подобный** runtime);
-- для приложения бесшовно: тот же стиль, что JSON-RPC entrypoint.
-
-Полная поддержка gRPC **не нужна** (без streaming, reflection, grpc-gateway annotations, dual-stack magic).
-
----
-
-## Референс: fastapi-jsonrpc
+## Желаемая модель
 
 ```python
-import fastapi_jsonrpc as jsonrpc
-from fastapi import Body
-
-app = jsonrpc.API()
-api_v1 = jsonrpc.Entrypoint('/api/v1/jsonrpc')
-
-@api_v1.method()
-def echo(data: str = Body(..., examples=['hello'])) -> str:
-    return data
-
-app.bind_entrypoint(api_v1)
+app = FastAPI()
+app.include_router(router, prefix="/api")
+# lifespan: обойти дерево routes → собрать proto → поднять gRPC entry (как uwsgi)
 ```
 
-Суть модели:
-
-| JSON-RPC | Наш gRPC-аналог |
-|----------|-----------------|
-| `API()` | `API()` / mount в существующий FastAPI |
-| `Entrypoint('/path')` | `Service('package.Service')` |
-| `@entrypoint.method()` | `@service.method()` |
-| `POST /jsonrpc` + JSON body | gRPC unary на отдельном порту (Rust) |
-| OpenAPI/OpenRPC | опционально proto/descriptor для клиентов |
-| `Depends` / `Body` / ошибки | то же |
-
-Метод — это **Python handler**, а не proxy на чужой gRPC upstream.
-
----
-
-## Целевой DX
-
-```python
-import fastapi_grpc as grpc
-from fastapi import Body, Depends
-from pydantic import BaseModel
-
-app = grpc.API()          # совместим с обычным FastAPI-поверхностью
-svc = grpc.Service("demo.Greeter")
-
-class HelloReply(BaseModel):
-    message: str
-
-@svc.method()
-async def say_hello(name: str = Body(...)) -> HelloReply:
-    return HelloReply(message=f"Hello, {name}")
-
-app.bind_service(svc)
-
-# HTTP (docs / health) — Granian ASGI
-# gRPC unary     — Rust listener, вызывает зарегистрированные Python methods
-```
-
-Бесшовность:
-
-1. Те же `Body` / `Depends` / Pydantic / async, что в FastAPI и fastapi-jsonrpc.
-2. Обычные HTTP routes приложения не ломаются.
-3. Запуск: Granian для ASGI + Rust gRPC port из того же процесса (или рядом через embed API).
-
----
-
-## Архитектура (минимальная)
+Поток:
 
 ```
-gRPC client                    HTTP client
-    │                              │
-    ▼                              ▼
-┌────────────────┐         ┌─────────────────┐
-│ Rust gRPC      │         │ Granian ASGI    │
-│ unary server   │         │ (HTTP docs etc) │
-│ (tonic)        │         └────────┬────────┘
-└───────┬────────┘                  │
-        │ PyO3 callback             │
-        ▼                           ▼
-   Method registry  ←── FastAPI / grpc.API (Python)
-   (@svc.method handlers)
+grpc session → call → (adapter) → FastAPI → (adapter) → session
 ```
 
-**Rust делает только:**
-
-- слушает gRPC (HTTP/2 + protobuf framing);
-- маппит `service/method` → зарегистрированный Python callable;
-- сериализует request/response (простой JSON↔proto или protobuf с автоген из сигнатур — см. ниже);
-- возвращает unary status/errors.
-
-**Rust НЕ делает:** streaming, full codegen gateway, Envoy, google.api.http.
+То есть приложение остаётся обычным FastAPI; gRPC — внешняя точка входа, которая прогоняет вызов через тот же app.
 
 ---
 
-## Сериализация (осознанно простая)
+## ОТВЕТ: почему ЭТО нельзя (нативно)
 
-Для MVP достаточно одного из двух (выбрать на Phase 0 spike):
+### 1. У uWSGI / Granian нет gRPC entrypoint
 
-1. **Proto-lite / JSON payload в bytes** — метод принимает/отдаёт Pydantic; на wire — protobuf-обёртка `{json: bytes}` или raw JSON encoding (как многие внутренние RPC). Минимум tooling.
-2. **Авто-proto из Pydantic** — при `bind_service` строить descriptor (имя сервиса + message из моделей). Клиентам нужен `.proto` export.
+uWSGI говорит **WSGI**. Granian говорит **ASGI/WSGI/RSGI + HTTP/1|/2**.  
+Оба принимают HTTP(S)-запросы в модель request/response приложения.
 
-Рекомендация MVP: **вариант 1** (быстрее), экспорт `.proto` — Phase 2.
+**gRPC session** — это HTTP/2 + protobuf framing + gRPC status/trailers + path вида `/package.Service/Method`.  
+Ни uWSGI, ни Granian не предоставляют «grpc session → application» как native plugin.  
+Значит «точка входа как делает uwsgi» для gRPC **не существует** в этих серверах: её пришлось бы писать с нуля (отдельный listener), это уже не uwsgi/Granian.
 
----
+### 2. У FastAPI нет объекта gRPC session
 
-## Объём MVP (что входит / что нет)
+Контракт FastAPI/Starlette:
 
-### Входит
+- `scope["type"] == "http"` (или `websocket`)
+- method / path / headers / body
+- `Request` / `Response`
 
-- `API`, `Service`, `@method()`, `bind_service`
-- Unary call only
-- Pydantic in/out + `Body` / `Depends`
-- Typed errors → gRPC status (+ optional details)
-- Rust unary server + PyO3 dispatch
-- Granian для HTTP-части приложения
-- Example + тесты (grpcurl или tonic client)
+Нет:
 
-### Не входит
+- gRPC metadata как first-class session
+- stream handles / half-close
+- trailers / `grpc-status`
 
-- Client streaming / server streaming / bidi
-- gRPC reflection (можно позже одной галкой)
-- HTTP/JSON transcoding, grpc-gateway annotations
-- Конвертация существующих `@app.get` HTTP handlers в gRPC
-- Полная совместимость с произвольными `.proto` от третьих сторон (сначала «наши» методы)
-
----
-
-## Этапы
-
-### Phase 0 — Spike (1 тонкий вертикальный срез)
-
-1. Разобрать регистрацию методов в fastapi-jsonrpc (`Entrypoint.method`, dependency solving).
-2. Rust: minimal tonic unary + callback в Python (PyO3).
-3. Один `@svc.method()` echo end-to-end через grpcurl.
-
-### Phase 1 — Python facade как jsonrpc
-
-1. Портировать DX: `API` / `Service` / `@method` / `bind_service`.
-2. Dependency injection через FastAPI/Starlette solve (переиспользовать подход jsonrpc).
-3. Error model: `BaseError` → gRPC status code.
-4. Документация: «если умеешь fastapi-jsonrpc — умеешь это».
-
-### Phase 2 — DX + wire polish
-
-1. Export `.proto` / FileDescriptor для клиентов.
-2. Metadata → `Header`-подобные Depends.
-3. Опционально reflection для dev.
-
-### Phase 3 — Runtime
-
-1. Один процесс: Granian ASGI + Rust gRPC listener (embed).
-2. Lifecycle: start/stop вместе с app lifespan.
-3. Базовые метрики/логи method name + latency.
-
----
-
-## Структура репо
+Поэтому цепочка никогда не бывает:
 
 ```
-fastapi-grpc-gateway/
-├── crates/fgg-runtime/     # tonic unary + PyO3 dispatch
-├── python/fastapi_grpc/    # API, Service, @method (зеркало jsonrpc)
-├── examples/echo/
-├── tests/
-├── docs/PLAN.md
-└── pyproject.toml          # maturin
+grpc session → FastAPI → session
 ```
 
-Имя пакета Python: `fastapi_grpc` (зеркало `fastapi_jsonrpc`).  
-Имя репо можно оставить; в README явно: **server-side methods**, не gateway-proxy.
+Она всегда:
+
+```
+grpc bytes → (адаптер синтезирует ASGI HTTP) → FastAPI → (адаптер обратно в grpc)
+```
+
+Адаптер **обязан** врать FastAPI, что это HTTP. Это не интеграция session, а **перевод протокола**. Без потери семантики это не «прокинуть session».
+
+### 3. ASGI ломает часть gRPC (особенно streaming)
+
+ASGI HTTP **не моделирует HTTP/2 trailers**.  
+gRPC status часто уходит в trailers; для streaming это критично.  
+Даже unary «натянуть» можно через fake HTTP; streaming через FastAPI ASGI — тупик или кастомный non-ASGI путь (то есть снова мимо FastAPI).
+
+### 4. Дерево FastAPI ≠ дерево proto
+
+Обойти `app.routes` / `iter_route_contexts` / `get_openapi(routes=...)` в lifespan — **можно**.  
+Сделать из этого корректный gRPC service — **нельзя без потерь**:
+
+| FastAPI | gRPC |
+|---------|------|
+| `GET /api/users/{id}` | `Service.Method` + message fields |
+| path + query + body + headers | одно request message |
+| несколько methods на один path | разные RPC |
+| `StreamingResponse`, `File`, `Form`, WebSocket | нет unary-эквивалента |
+| HTTP 422 validation | `INVALID_ARGUMENT` (маппинг эвристический) |
+| middleware CORS/GZip/Session | на synthetic request бессмысленны или вредны |
+
+OpenAPI→protobuf (генераторы) — lossy/beta.  
+`include_router(..., prefix="/api")` даёт HTTP-пути; имена RPC из них — эвристика (`ApiUsersIdGet`), не контракт.
+
+### 5. «Создать proto клиент» в lifespan — путаница роли
+
+Если цель — **принять** gRPC снаружи и вызвать FastAPI, нужен **gRPC server** (servicer), не client.
+
+- Client = исходящие вызовы к чужому gRPC.
+- Обход дерева FastAPI даёт **описание нашего HTTP API**, не stub к upstream.
+
+«Proto client из дерева FastAPI» не закрывает задачу entrypoint.  
+Нужен server + descriptor (для клиентов снаружи) — это другая сущность.
+
+### 6. Итог одной фразой
+
+**Нельзя**, потому что FastAPI живёт в ASGI/HTTP, а gRPC session — в другом протоколе; uWSGI/Granian не дают gRPC entry; маршрутное дерево HTTP неизоморфно proto; session через FastAPI всегда только через лживый HTTP-адаптер с потерей семантики (trailers/streaming/metadata/status).
+
+Что *можно* (и это уже не «нативно»): отдельный Rust gRPC listener → синтетический ASGI call в `app` → ответ обратно. Это **эмуляция**, не uwsgi-style session passthrough.
 
 ---
 
-## Acceptance
+## Что из желаемого всё же реализуемо (с оговорками)
 
-1. Пример из README копипастится и отвечает на unary gRPC call.
-2. Handler пишется как jsonrpc-method (не как REST route и не как grpcio stub).
-3. Нет зависимости приложения от ручных `*_pb2.py` в MVP.
-4. HTTP routes FastAPI продолжают работать через Granian.
-5. Нет streaming / transcoding в scope.
+| Шаг | Статус |
+|-----|--------|
+| `app = FastAPI(); include_router(...)` без смены DX | да |
+| lifespan: walk `app.routes` / OpenAPI | да |
+| сгенерировать *эвристический* `.proto` / method map | да, lossy |
+| поднять отдельный gRPC unary server (Rust) | да |
+| adapter: gRPC unary → fake ASGI Request → `app` → Response → gRPC | да, только unary + JSON/Pydantic routes |
+| «как uwsgi» один entry для grpc session | **нет** |
+| полный gRPC (stream, trailers, native session) через FastAPI | **нет** |
 
 ---
 
-## Следующий шаг
+## Реверс-архитектура (если всё же делать эмулятор)
 
-Phase 0 spike: echo unary Rust→Python + скелет `Service.method` по образцу fastapi-jsonrpc.
+```
+[gRPC client]
+     │ unary
+     ▼
+Rust listener (НЕ Granian/uWSGI entry)
+     │ map Method → path+HTTP verb (из снимка routes)
+     ▼
+adapter: protobuf/JSON → ASGI scope + body
+     ▼
+FastAPI app (тот же, с /api/...)
+     ▼
+adapter: Response → protobuf + grpc-status
+```
+
+Lifespan:
+
+1. Дождаться полного дерева routes (после всех `include_router`).
+2. Снять OpenAPI / `APIRoute` list.
+3. Построить method table + optional `.proto` dump.
+4. Старт Rust unary server с callback «вызови ASGI app».
+5. Shutdown — остановить listener.
+
+Ограничить support matrix явно:
+
+- только `APIRoute` с JSON body / Pydantic;
+- только unary;
+- без WebSocket / File / StreamingResponse;
+- middleware, завязанный на реальный HTTP client, не гарантируется.
+
+---
+
+## Вывод для продукта
+
+Целевой DX «обычный FastAPI + в lifespan сам станет gRPC» **нельзя сделать честно** на стеке uWSGI/Granian/ASGI.
+
+Честные варианты:
+
+1. **Эмулятор** (адаптер выше) — «похоже», но не session passthrough.
+2. **Отдельные gRPC handlers** (стиль jsonrpc) — честный RPC, другой DX.
+3. **Не FastAPI на hot path** — Rust/tonic servicer, FastAPI только HTTP.
+
+Рекомендация: не продавать (1) как «точку входа как uwsgi»; если нужен именно обход дерева FastAPI — делать (1) с жёстким unary-only и документированными потерями.
