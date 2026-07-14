@@ -166,7 +166,11 @@ async def test_serve_signal_handler_fires(tmp_path):
                     break
             except OSError:
                 await asyncio.sleep(0.05)
-        assert handlers
+        for _ in range(100):
+            if handlers:
+                break
+            await asyncio.sleep(0.05)
+        assert handlers, "signal handlers were not registered"
         handlers[0]()
         await asyncio.wait_for(task, timeout=15)
 
