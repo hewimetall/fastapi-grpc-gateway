@@ -14,4 +14,8 @@ dist/
 .mypy_cache/
 .ruff_cache/
 /Cargo.lock
+.coverage
+coverage.json
+htmlcov/
+.coverage.*
 
