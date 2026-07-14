@@ -8,6 +8,9 @@ build/
 .venv/
 venv/
 gen/
+target/
 *.pb
 .mypy_cache/
 .ruff_cache/
+Cargo.lock
+
