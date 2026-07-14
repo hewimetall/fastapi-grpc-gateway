@@ -1,3 +1,0 @@
-[workspace]
-members = ["crates/fgg-worker"]
-resolver = "2"

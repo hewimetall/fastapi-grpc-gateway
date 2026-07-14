@@ -1,4 +1,4 @@
-"""End-to-end: Granian (FastAPI) + Rust fgg-worker + gRPC client."""
+"""End-to-end: fgg serve (Granian embed + in-process gRPC→ASGI)."""
 
 from __future__ import annotations
 
@@ -13,7 +13,6 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKER = ROOT / "target" / "debug" / "fgg-worker"
 
 
 def _free_port() -> int:
@@ -22,7 +21,7 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-def _wait_port(host: str, port: int, timeout: float = 15.0) -> None:
+def _wait_port(host: str, port: int, timeout: float = 20.0) -> None:
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
@@ -35,93 +34,63 @@ def _wait_port(host: str, port: int, timeout: float = 15.0) -> None:
 
 @pytest.fixture(scope="module")
 def e2e_stack(tmp_path_factory):
-    if not WORKER.exists():
-        pytest.skip("fgg-worker binary missing; run cargo build -p fgg-worker")
-
     tmp = tmp_path_factory.mktemp("e2e")
     http_port = _free_port()
     grpc_port = _free_port()
 
-    # generate bindings from example app
     env = os.environ.copy()
     env["PYTHONPATH"] = f"{ROOT / 'examples'}:{env.get('PYTHONPATH', '')}"
-    subprocess.check_call(
+
+    proc = subprocess.Popen(
         [
             sys.executable,
             "-m",
             "fastapi_grpc_gateway.cli",
-            "generate",
+            "serve",
             "--app",
             "hello_app:app",
+            "--http-host",
+            "127.0.0.1",
+            "--http-port",
+            str(http_port),
+            "--grpc-bind",
+            f"127.0.0.1:{grpc_port}",
             "--out",
             str(tmp),
         ],
         cwd=ROOT,
         env=env,
-    )
-    bindings = tmp / "bindings.toml"
-    assert bindings.exists()
-
-    # Granian ASGI
-    granian = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "granian",
-            "--interface",
-            "asgi",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(http_port),
-            "hello_app:app",
-        ],
-        cwd=ROOT / "examples",
-        env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-    )
-    # Rust worker
-    worker_env = os.environ.copy()
-    worker = subprocess.Popen(
-        [
-            str(WORKER),
-            "--bind",
-            f"127.0.0.1:{grpc_port}",
-            "--upstream",
-            f"http://127.0.0.1:{http_port}",
-            "--bindings",
-            str(bindings),
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        env=worker_env,
     )
 
     try:
         _wait_port("127.0.0.1", http_port)
         _wait_port("127.0.0.1", grpc_port)
+        bindings = tmp / "bindings.toml"
+        deadline = time.time() + 10
+        while time.time() < deadline and not bindings.exists():
+            time.sleep(0.05)
+        assert bindings.exists(), "bindings.toml was not written"
         yield {
             "grpc_port": grpc_port,
             "http_port": http_port,
             "proto_dir": tmp,
             "bindings": bindings,
+            "proc": proc,
         }
     finally:
-        for p in (worker, granian):
-            p.terminate()
-            try:
-                p.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                p.kill()
+        proc.terminate()
+        try:
+            proc.wait(timeout=8)
+        except subprocess.TimeoutExpired:
+            proc.kill()
 
 
 def _compile_proto(proto_dir: Path):
     from grpc_tools import protoc
 
     proto = proto_dir / "service.proto"
-    # Use shared RpcRequest messages — compile generated service.proto
-    # Rewrite package import: messages are in same file.
     rc = protoc.main(
         [
             "protoc",
@@ -135,20 +104,22 @@ def _compile_proto(proto_dir: Path):
     sys.path.insert(0, str(proto_dir))
     import importlib
 
+    # Fresh import each time module name collides across tests
+    for name in ("service_pb2", "service_pb2_grpc"):
+        sys.modules.pop(name, None)
     pb2 = importlib.import_module("service_pb2")
     pb2_grpc = importlib.import_module("service_pb2_grpc")
     return pb2, pb2_grpc
 
 
 @pytest.mark.asyncio
-async def test_grpc_through_rust_worker_to_granian(e2e_stack):
+async def test_grpc_inprocess_asgi(e2e_stack):
     grpc = pytest.importorskip("grpc")
     from grpc import aio
 
     pb2, pb2_grpc = _compile_proto(e2e_stack["proto_dir"])
     port = e2e_stack["grpc_port"]
 
-    # parse bindings for rpc names
     import tomllib
 
     data = tomllib.loads(e2e_stack["bindings"].read_text())
@@ -175,3 +146,13 @@ async def test_grpc_through_rust_worker_to_granian(e2e_stack):
         resp = await method(pb2.RpcRequest(body=payload))
         assert resp.status_code == 200
         assert json.loads(resp.body)["name"] == "x"
+
+
+@pytest.mark.asyncio
+async def test_http_still_works(e2e_stack):
+    httpx = pytest.importorskip("httpx")
+    port = e2e_stack["http_port"]
+    async with httpx.AsyncClient() as client:
+        r = await client.get(f"http://127.0.0.1:{port}/api/hello")
+        assert r.status_code == 200
+        assert r.json() == {"message": "hello"}

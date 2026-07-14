@@ -5,12 +5,14 @@
 ## Архитектура
 
 ```
-gRPC → fgg-worker (Rust) → HTTP → Granian → FastAPI
+HTTP  → Granian embed ─┐
+                       ├─► FastAPI (один ASGI app, один процесс)
+gRPC  → ASGI adapter ──┘
 ```
 
-- Python: только генерация `service.proto` + `bindings.toml`
-- Rust worker: convert + proxy
-- Granian: ASGI для приложения
+- `fgg serve`: кастомный процесс вокруг Granian embed + gRPC→ASGI
+- `fgg generate`: `service.proto` + `bindings.toml`
+- Без внешнего HTTP hop (localhost proxy)
 
 ## В скоупе
 

@@ -1,44 +1,31 @@
 # fastapi-grpc-gateway
 
-Делает так, чтобы к обычному FastAPI можно было ходить ещё и по **gRPC**.
+Обычный FastAPI — ещё и по **gRPC**, в одном процессе с Granian.
 
 ```
-HTTP  → Granian → FastAPI
-gRPC  → Rust worker → (тот же) Granian → FastAPI
+HTTP  → Granian embed ─┐
+                       ├─► FastAPI (один ASGI app)
+gRPC  → ASGI adapter ──┘   (без localhost HTTP hop)
 ```
-
-FastAPI остаётся обычным. Worker только переводит gRPC в HTTP.
 
 **Как это работает:** [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md)
 
 ---
 
-## С чего начать (без локальной сборки)
-
-Ставите готовые пакеты из релиза / PyPI — **не нужно** `cargo build` и `pip install -e .`.
-
-### 1. Python-пакет
+## С чего начать
 
 ```bash
-pip install fastapi-grpc-gateway granian
+pip install fastapi-grpc-gateway
 ```
 
-Если на PyPI ещё нет (первый релиз / Trusted Publisher не настроен) — с GitHub Release:
+Если на PyPI ещё нет — с GitHub Release:
 
 ```bash
 pip install \
-  https://github.com/hewimetall/fastapi-grpc-gateway/releases/download/v0.1.0/fastapi_grpc_gateway-0.1.0-py3-none-any.whl
+  https://github.com/hewimetall/fastapi-grpc-gateway/releases/download/v0.2.0/fastapi_grpc_gateway-0.2.0-py3-none-any.whl
 ```
 
-### 2. Бинарник worker
-
-```bash
-curl -sL -o fgg-worker \
-  https://github.com/hewimetall/fastapi-grpc-gateway/releases/download/v0.1.0/fgg-worker-x86_64-unknown-linux-gnu
-chmod +x fgg-worker
-```
-
-### 3. Ваше FastAPI-приложение
+### Приложение
 
 ```python
 # app.py
@@ -51,44 +38,33 @@ async def hello():
     return {"message": "hello"}
 ```
 
-### 4. Схемы + два процесса
+### Один процесс
 
 ```bash
-# схемы из ваших роутов
-fgg generate --app app:app --out ./gen
-
-# терминал A — HTTP
-granian --interface asgi --host 127.0.0.1 --port 8000 app:app
-
-# терминал B — gRPC
-./fgg-worker \
-  --bind 127.0.0.1:50051 \
-  --upstream http://127.0.0.1:8000 \
-  --bindings ./gen/bindings.toml
+fgg serve --app app:app --http-port 8000 --grpc-bind 127.0.0.1:50051 --out ./gen
 ```
 
-Проверка: `curl http://127.0.0.1:8000/api/hello`
+- HTTP: `curl http://127.0.0.1:8000/api/hello`
+- gRPC: порт `50051`, контракт в `./gen/service.proto`
 
-Подробнее про установку и релизы: [docs/PUBLISHING.md](docs/PUBLISHING.md)
+Подробнее: [docs/PUBLISHING.md](docs/PUBLISHING.md)
 
 ---
 
 ## Кто за что отвечает
 
-| Компонент | Откуда брать | Роль |
-|-----------|--------------|------|
-| `fastapi-grpc-gateway` | `pip install` / PyPI / Release `.whl` | `fgg generate` → proto + bindings |
-| `fgg-worker` | GitHub Release (бинарник) | gRPC → HTTP |
-| `granian` | `pip install granian` | HTTP для FastAPI |
-| ваше `app.py` | вы | обычные FastAPI-роуты |
+| Компонент | Роль |
+|-----------|------|
+| `fgg serve` | Granian (HTTP) + gRPC→ASGI in-process |
+| `fgg generate` | только proto + bindings |
+| ваше `app.py` | обычные FastAPI-роуты |
 
 ---
 
-## Для контрибьюторов (сборка из исходников)
+## Для контрибьюторов
 
 ```bash
 pip install -e ".[dev]"
-cargo build -p fgg-worker
 pytest
 bash scripts/test_go_client.sh
 ```

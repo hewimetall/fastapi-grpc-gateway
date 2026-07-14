@@ -1,14 +1,17 @@
 [project]
 name = "fastapi-grpc-gateway"
-version = "0.1.0"
-description = "Minimal Python schema gen for Rust gRPC→HTTP worker over Granian/FastAPI"
+version = "0.2.0"
+description = "Serve FastAPI over gRPC in-process with Granian (no HTTP hop)"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "hewimetall" }]
-keywords = ["fastapi", "grpc", "granian", "schema"]
+keywords = ["fastapi", "grpc", "granian", "asgi"]
 dependencies = [
     "fastapi>=0.115.0",
+    "granian>=1.6.0",
+    "grpcio>=1.68.0",
+    "protobuf>=5.0.0",
 ]
 
 [project.urls]
@@ -22,8 +25,6 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24.0",
     "httpx>=0.27.0",
-    "granian>=1.6.0",
-    "grpcio>=1.68.0",
     "grpcio-tools>=1.68.0",
 ]
 
@@ -37,6 +38,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["fastapi_grpc_gateway*"]
+
+[tool.setuptools.package-data]
+fastapi_grpc_gateway = ["proto/*.proto"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

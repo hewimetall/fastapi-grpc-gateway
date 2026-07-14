@@ -1,6 +1,6 @@
 name: Release
 
-# Тег v0.1.0 → GitHub Release (whl + fgg-worker) + PyPI
+# Тег v0.2.0 → GitHub Release (whl) + PyPI
 on:
   push:
     tags: ["v*"]
@@ -52,40 +52,9 @@ jobs:
             dist/*.tar.gz
           if-no-files-found: error
 
-  build-worker:
-    name: Build fgg-worker binary
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install protoc
-        run: |
-          curl -sL -o /tmp/protoc.zip \
-            https://github.com/protocolbuffers/protobuf/releases/download/v28.3/protoc-28.3-linux-x86_64.zip
-          sudo unzip -o /tmp/protoc.zip -d /usr/local
-          protoc --version
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Build release binary
-        run: cargo build -p fgg-worker --release
-
-      - name: Stage binary
-        run: |
-          mkdir -p dist
-          cp target/release/fgg-worker dist/fgg-worker-x86_64-unknown-linux-gnu
-          chmod +x dist/fgg-worker-x86_64-unknown-linux-gnu
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: release-worker
-          path: dist/fgg-worker-x86_64-unknown-linux-gnu
-          if-no-files-found: error
-
   github-release:
     name: GitHub Release
-    needs: [build-python, build-worker]
+    needs: [build-python]
     if: startsWith(github.ref, 'refs/tags/v') && (github.event_name != 'workflow_dispatch' || inputs.dry_run == false)
     runs-on: ubuntu-latest
     permissions:
@@ -96,37 +65,30 @@ jobs:
           name: release-wheels
           path: dist
 
-      - uses: actions/download-artifact@v4
-        with:
-          name: release-worker
-          path: dist
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/*.whl
             dist/*.tar.gz
-            dist/fgg-worker-x86_64-unknown-linux-gnu
           generate_release_notes: true
           fail_on_unmatched_files: true
           body: |
-            ## Install (без локальной сборки)
+            ## Install
 
             ```bash
-            # Python
             pip install https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/fastapi_grpc_gateway-${{ github.ref_name }}.whl
-            # если имя файла с подчёркиваниями:
-            # pip install https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/fastapi_grpc_gateway-0.1.0-py3-none-any.whl
-            pip install granian
-
-            # Worker
-            curl -sL -o fgg-worker \
-              https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/fgg-worker-x86_64-unknown-linux-gnu
-            chmod +x fgg-worker
+            # имя файла обычно с подчёркиваниями, например:
+            # fastapi_grpc_gateway-0.2.0-py3-none-any.whl
             ```
 
-            После настройки PyPI Trusted Publishing: `pip install fastapi-grpc-gateway==0.1.0` (без префикса `v`).
+            Запуск:
+
+            ```bash
+            fgg serve --app app:app --http-port 8000 --grpc-bind 127.0.0.1:50051 --out ./gen
+            ```
+
+            После настройки PyPI Trusted Publishing: `pip install fastapi-grpc-gateway`.
 
   pypi-publish:
     name: Publish to PyPI
