@@ -1,11 +1,9 @@
 # fastapi-grpc-gateway
 
-gRPC unary entry over existing FastAPI JSON routes:
+gRPC unary → **convert** → `app(scope, receive, send)` → convert back.
 
-`grpc → adapter → FastAPI → adapter`
+FastAPI itself routes and runs handlers. Schema gen: `.proto` + `FileDescriptorSet`.
 
-Schema generation from the FastAPI route tree (`.proto`, descriptor, method map).
-
-No cookies / redirects / FileResponse / StreamingResponse.
+No cookies / redirects / FileResponse / StreamingResponse. No `methods.json` dispatch table.
 
 See [`docs/PLAN.md`](docs/PLAN.md).
