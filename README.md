@@ -1,10 +1,10 @@
 # fastapi-grpc-gateway
 
-Обычный FastAPI по HTTP (Granian) и по **gRPC** (Rust). В Python **нет** `import grpc`.
+Обычный FastAPI по HTTP и по **gRPC** (Rust). В Python **нет** `import grpc`.
 
 ```
-HTTP  → Granian (Python)  → FastAPI
-gRPC  → fgg-worker (Rust) → HTTP → Granian → FastAPI
+HTTP  → granian | uvicorn | gunicorn+uvicorn  → FastAPI
+gRPC  → fgg-worker (Rust) → HTTP → (тот же upstream) → FastAPI
 ```
 
 **Как это работает:** [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md)
@@ -15,7 +15,9 @@ gRPC  → fgg-worker (Rust) → HTTP → Granian → FastAPI
 
 ```bash
 uv add fastapi-grpc-gateway
-# + бинарник fgg-worker с GitHub Release / `cargo build -p fgg-worker`
+# опционально:
+uv add fastapi-grpc-gateway --extra uvicorn
+uv add fastapi-grpc-gateway --extra gunicorn
 ```
 
 ### Один вход
@@ -23,7 +25,15 @@ uv add fastapi-grpc-gateway
 ```bash
 cargo build -p fgg-worker
 export FGG_WORKER=./target/debug/fgg-worker
+
+# по умолчанию — Granian embed
 uv run fgg serve --app app:app --http-port 8000 --grpc-bind 127.0.0.1:50051 --out ./gen
+
+# uvicorn
+uv run fgg serve --app app:app --http-backend uvicorn --out ./gen
+
+# gunicorn + UvicornWorker
+uv run fgg serve --app app:app --http-backend gunicorn --gunicorn-workers 2 --out ./gen
 ```
 
 ---
@@ -32,7 +42,8 @@ uv run fgg serve --app app:app --http-port 8000 --grpc-bind 127.0.0.1:50051 --ou
 
 | Компонент | Роль |
 |-----------|------|
-| `fgg serve` | Granian HTTP + spawn Rust `fgg-worker` |
+| `fgg serve` | HTTP backend + spawn Rust `fgg-worker` |
+| `--http-backend` | `granian` (default) / `uvicorn` / `gunicorn` |
 | `fgg generate` | proto + bindings |
 | `fgg-worker` / `fgg-core` | **весь** gRPC (Rust) |
 | ваше `app.py` | FastAPI-роуты |

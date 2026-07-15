@@ -1,4 +1,4 @@
-"""Orchestrate Granian (HTTP) + Rust fgg-worker (gRPC). No Python gRPC."""
+"""Orchestrate HTTP ASGI server + Rust fgg-worker (gRPC). No Python gRPC."""
 
 from __future__ import annotations
 
@@ -9,13 +9,17 @@ import shutil
 import signal
 import socket
 import subprocess
+import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi_grpc_gateway.schema import generate_schema
 
 log = logging.getLogger("fgg.serve")
+
+HttpBackend = Literal["granian", "uvicorn", "gunicorn"]
 
 
 def _wait_tcp(host: str, port: int, timeout: float = 30.0) -> None:
@@ -61,6 +65,124 @@ def find_worker_binary() -> Path:
     )
 
 
+def build_uvicorn_cmd(
+    app_target: str,
+    *,
+    host: str,
+    port: int,
+) -> list[str]:
+    return [
+        sys.executable,
+        "-m",
+        "uvicorn",
+        app_target,
+        "--host",
+        host,
+        "--port",
+        str(port),
+    ]
+
+
+def build_gunicorn_cmd(
+    app_target: str,
+    *,
+    host: str,
+    port: int,
+    workers: int = 1,
+) -> list[str]:
+    return [
+        sys.executable,
+        "-m",
+        "gunicorn",
+        app_target,
+        "-k",
+        "uvicorn.workers.UvicornWorker",
+        "-b",
+        f"{host}:{port}",
+        "-w",
+        str(workers),
+    ]
+
+
+@dataclass
+class _HttpRuntime:
+    backend: HttpBackend
+    granian_server: Any = None
+    http_task: asyncio.Task[Any] | None = None
+    http_proc: subprocess.Popen[bytes] | None = None
+
+    async def stop(self) -> None:
+        if self.http_proc is not None:
+            self.http_proc.terminate()
+            try:
+                await asyncio.to_thread(self.http_proc.wait, 5)
+            except Exception:  # noqa: BLE001
+                self.http_proc.kill()
+            self.http_proc = None
+        if self.granian_server is not None:
+            self.granian_server.stop()
+            self.granian_server = None
+        if self.http_task is not None:
+            try:
+                await asyncio.wait_for(self.http_task, timeout=10)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                self.http_task.cancel()
+            self.http_task = None
+
+
+async def _start_http(
+    app: Any,
+    *,
+    backend: HttpBackend,
+    app_target: str | None,
+    http_host: str,
+    http_port: int,
+    gunicorn_workers: int,
+) -> _HttpRuntime:
+    if backend == "granian":
+        from granian.constants import Interfaces
+        from granian.server.embed import Server
+
+        server = Server(
+            app,
+            address=http_host,
+            port=http_port,
+            interface=Interfaces.ASGI,
+        )
+        task = asyncio.create_task(server.serve(), name="fgg-granian-http")
+        await asyncio.to_thread(_wait_tcp, http_host, http_port)
+        log.info("HTTP (granian embed) on http://%s:%d", http_host, http_port)
+        return _HttpRuntime(backend=backend, granian_server=server, http_task=task)
+
+    if not app_target or ":" not in app_target:
+        raise ValueError(
+            f"http-backend={backend} requires app target module:attr "
+            "(pass the same --app value)"
+        )
+
+    if backend == "uvicorn":
+        cmd = build_uvicorn_cmd(app_target, host=http_host, port=http_port)
+    elif backend == "gunicorn":
+        cmd = build_gunicorn_cmd(
+            app_target,
+            host=http_host,
+            port=http_port,
+            workers=gunicorn_workers,
+        )
+    else:  # pragma: no cover
+        raise ValueError(f"unknown http backend: {backend}")
+
+    log.info("starting HTTP backend %s: %s", backend, " ".join(cmd))
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    try:
+        await asyncio.to_thread(_wait_tcp, http_host, http_port)
+    except TimeoutError:
+        proc.terminate()
+        raise
+    log.info("HTTP (%s) on http://%s:%d", backend, http_host, http_port)
+    return _HttpRuntime(backend=backend, http_proc=proc)
+
+
 async def serve_app(
     app: Any,
     *,
@@ -75,9 +197,12 @@ async def serve_app(
     enable_grpc: bool = True,
     stop_event: asyncio.Event | None = None,
     worker_bin: Path | None = None,
+    http_backend: HttpBackend = "granian",
+    app_target: str | None = None,
+    gunicorn_workers: int = 1,
 ) -> None:
     """
-    HTTP via Granian embed (Python/ASGI).
+    HTTP via Granian embed / uvicorn / gunicorn+uvicorn.
     gRPC via Rust fgg-worker subprocess (no ``import grpc`` in Python).
     """
     bundle = generate_schema(app, package=package, service=service)
@@ -97,21 +222,16 @@ async def serve_app(
         if schema_out is None:
             (out / "service.proto").write_text(bundle.proto_source, encoding="utf-8")
 
-    granian_server = None
-    http_task = None
+    http_rt: _HttpRuntime | None = None
     if enable_http:
-        from granian.constants import Interfaces
-        from granian.server.embed import Server
-
-        granian_server = Server(
+        http_rt = await _start_http(
             app,
-            address=http_host,
-            port=http_port,
-            interface=Interfaces.ASGI,
+            backend=http_backend,
+            app_target=app_target,
+            http_host=http_host,
+            http_port=http_port,
+            gunicorn_workers=gunicorn_workers,
         )
-        http_task = asyncio.create_task(granian_server.serve(), name="fgg-granian-http")
-        await asyncio.to_thread(_wait_tcp, http_host, http_port)
-        log.info("HTTP (Granian embed) on http://%s:%d", http_host, http_port)
 
     worker_proc: subprocess.Popen[bytes] | None = None
     if enable_grpc:
@@ -158,13 +278,8 @@ async def serve_app(
                 await asyncio.to_thread(worker_proc.wait, 5)
             except Exception:  # noqa: BLE001
                 worker_proc.kill()
-        if granian_server is not None:
-            granian_server.stop()
-        if http_task is not None:
-            try:
-                await asyncio.wait_for(http_task, timeout=10)
-            except (asyncio.TimeoutError, asyncio.CancelledError):
-                http_task.cancel()
+        if http_rt is not None:
+            await http_rt.stop()
 
 
 def run_serve(app: Any, **kwargs: Any) -> None:

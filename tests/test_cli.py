@@ -78,3 +78,55 @@ def test_serve_cli_dispatches(monkeypatch, tmp_path):
     assert called["kwargs"]["enable_grpc"] is False
     assert called["kwargs"]["bindings_path"] == bindings
     assert called["kwargs"]["worker_bin"] == worker
+    assert called["kwargs"]["http_backend"] == "granian"
+    assert called["kwargs"]["app_target"] == "hello_app:app"
+
+
+def test_serve_cli_uvicorn_backend(monkeypatch, tmp_path):
+    called = {}
+
+    def fake_run(app, **kwargs):
+        called["kwargs"] = kwargs
+
+    monkeypatch.setattr("fastapi_grpc_gateway.serve.run_serve", fake_run)
+    monkeypatch.syspath_prepend(str(ROOT / "examples"))
+    cli.main(
+        [
+            "serve",
+            "--app",
+            "hello_app:app",
+            "--http-backend",
+            "uvicorn",
+            "--no-grpc",
+            "--out",
+            str(tmp_path),
+        ]
+    )
+    assert called["kwargs"]["http_backend"] == "uvicorn"
+    assert called["kwargs"]["app_target"] == "hello_app:app"
+
+
+def test_serve_cli_gunicorn_workers(monkeypatch, tmp_path):
+    called = {}
+
+    def fake_run(app, **kwargs):
+        called["kwargs"] = kwargs
+
+    monkeypatch.setattr("fastapi_grpc_gateway.serve.run_serve", fake_run)
+    monkeypatch.syspath_prepend(str(ROOT / "examples"))
+    cli.main(
+        [
+            "serve",
+            "--app",
+            "hello_app:app",
+            "--http-backend",
+            "gunicorn",
+            "--gunicorn-workers",
+            "3",
+            "--no-grpc",
+            "--out",
+            str(tmp_path),
+        ]
+    )
+    assert called["kwargs"]["http_backend"] == "gunicorn"
+    assert called["kwargs"]["gunicorn_workers"] == 3

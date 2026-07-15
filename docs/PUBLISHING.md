@@ -11,8 +11,12 @@ uv add fastapi-grpc-gateway
 
 ```bash
 export FGG_WORKER=./fgg-worker   # или target/debug/fgg-worker
-uv run fgg serve --app app:app --http-port 8000 --grpc-bind 127.0.0.1:50051 --out ./gen
+uv run fgg serve --app app:app --http-backend granian --out ./gen
+uv run fgg serve --app app:app --http-backend uvicorn --out ./gen
+uv run fgg serve --app app:app --http-backend gunicorn --gunicorn-workers 2 --out ./gen
 ```
+
+Extras: `uv add fastapi-grpc-gateway --extra uvicorn` / `--extra gunicorn`.
 
 gRPC **только** в Rust. В Python-пакете нет `grpcio`.
 

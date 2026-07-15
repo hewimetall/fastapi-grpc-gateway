@@ -435,3 +435,132 @@ async def test_serve_signal_handler_add_fails_gracefully(tmp_path):
                 await asyncio.sleep(0.05)
         stop.set()
         await asyncio.wait_for(task, timeout=15)
+
+
+def test_build_uvicorn_and_gunicorn_cmds():
+    u = serve_mod.build_uvicorn_cmd("hello_app:app", host="127.0.0.1", port=8000)
+    assert u[-5:] == ["hello_app:app", "--host", "127.0.0.1", "--port", "8000"]
+    assert "-m" in u and "uvicorn" in u
+
+    g = serve_mod.build_gunicorn_cmd(
+        "hello_app:app", host="0.0.0.0", port=9000, workers=4
+    )
+    assert "gunicorn" in g
+    assert "uvicorn.workers.UvicornWorker" in g
+    assert "0.0.0.0:9000" in g
+    assert "4" in g
+
+
+@pytest.mark.asyncio
+async def test_uvicorn_backend_requires_app_target(tmp_path):
+    app = FastAPI()
+    with pytest.raises(ValueError, match="app target"):
+        await serve_mod.serve_app(
+            app,
+            http_backend="uvicorn",
+            app_target=None,
+            schema_out=tmp_path,
+            enable_grpc=False,
+        )
+
+
+@pytest.mark.asyncio
+async def test_serve_uvicorn_backend_subprocess(tmp_path):
+    app = FastAPI()
+
+    @app.get("/")
+    async def root():
+        return {}
+
+    http_port = _free_port()
+    stop = asyncio.Event()
+    http_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    http_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    seen: list[list[str]] = []
+    real_popen = subprocess.Popen
+
+    def fake_popen(cmd, **kwargs):
+        seen.append(list(cmd))
+        http_sock.bind(("127.0.0.1", http_port))
+        http_sock.listen(1)
+        return real_popen(
+            ["sleep", "3600"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+        )
+
+    try:
+        with patch.object(serve_mod.subprocess, "Popen", side_effect=fake_popen):
+            task = asyncio.create_task(
+                serve_mod.serve_app(
+                    app,
+                    http_host="127.0.0.1",
+                    http_port=http_port,
+                    schema_out=tmp_path,
+                    enable_grpc=False,
+                    http_backend="uvicorn",
+                    app_target="hello_app:app",
+                    stop_event=stop,
+                )
+            )
+            for _ in range(100):
+                try:
+                    with socket.create_connection(("127.0.0.1", http_port), timeout=0.1):
+                        break
+                except OSError:
+                    await asyncio.sleep(0.05)
+            assert seen and "uvicorn" in seen[0]
+            stop.set()
+            await asyncio.wait_for(task, timeout=15)
+    finally:
+        http_sock.close()
+
+
+@pytest.mark.asyncio
+async def test_serve_gunicorn_backend_subprocess(tmp_path):
+    app = FastAPI()
+
+    @app.get("/")
+    async def root():
+        return {}
+
+    http_port = _free_port()
+    stop = asyncio.Event()
+    http_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    http_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    seen: list[list[str]] = []
+    real_popen = subprocess.Popen
+
+    def fake_popen(cmd, **kwargs):
+        seen.append(list(cmd))
+        http_sock.bind(("127.0.0.1", http_port))
+        http_sock.listen(1)
+        return real_popen(
+            ["sleep", "3600"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+        )
+
+    try:
+        with patch.object(serve_mod.subprocess, "Popen", side_effect=fake_popen):
+            task = asyncio.create_task(
+                serve_mod.serve_app(
+                    app,
+                    http_host="127.0.0.1",
+                    http_port=http_port,
+                    schema_out=tmp_path,
+                    enable_grpc=False,
+                    http_backend="gunicorn",
+                    app_target="hello_app:app",
+                    gunicorn_workers=2,
+                    stop_event=stop,
+                )
+            )
+            for _ in range(100):
+                try:
+                    with socket.create_connection(("127.0.0.1", http_port), timeout=0.1):
+                        break
+                except OSError:
+                    await asyncio.sleep(0.05)
+            assert seen and "gunicorn" in seen[0]
+            assert "2" in seen[0]
+            stop.set()
+            await asyncio.wait_for(task, timeout=15)
+    finally:
+        http_sock.close()
