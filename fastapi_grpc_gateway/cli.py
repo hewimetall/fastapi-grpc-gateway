@@ -1,4 +1,4 @@
-"""CLI: fgg generate | fgg serve — schema gen + Granian + Rust fgg-worker."""
+"""CLI: fgg generate | fgg serve — schema gen + HTTP backend + Rust fgg-worker."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def main(argv: list[str] | None = None) -> None:
 
     serve = sub.add_parser(
         "serve",
-        help="Granian HTTP + Rust fgg-worker gRPC (no Python gRPC)",
+        help="HTTP (granian|uvicorn|gunicorn) + Rust fgg-worker gRPC",
     )
     serve.add_argument("--app", required=True)
     serve.add_argument("--http-host", default="127.0.0.1")
@@ -47,9 +47,21 @@ def main(argv: list[str] | None = None) -> None:
         help="Optional bindings.toml (default: generated from app routes)",
     )
     serve.add_argument(
+        "--http-backend",
+        choices=("granian", "uvicorn", "gunicorn"),
+        default="granian",
+        help="ASGI HTTP server (default: granian embed)",
+    )
+    serve.add_argument(
+        "--gunicorn-workers",
+        type=int,
+        default=1,
+        help="Worker processes when --http-backend=gunicorn",
+    )
+    serve.add_argument(
         "--no-grpc",
         action="store_true",
-        help="Only Granian HTTP (do not spawn Rust fgg-worker)",
+        help="Only HTTP (do not spawn Rust fgg-worker)",
     )
     serve.add_argument(
         "--worker",
@@ -88,6 +100,9 @@ def main(argv: list[str] | None = None) -> None:
             enable_http=True,
             enable_grpc=not args.no_grpc,
             worker_bin=Path(args.worker) if args.worker else None,
+            http_backend=args.http_backend,
+            app_target=args.app,
+            gunicorn_workers=args.gunicorn_workers,
         )
         return
 

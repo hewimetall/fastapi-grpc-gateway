@@ -5,11 +5,12 @@
 ## Архитектура
 
 ```
-HTTP  → Granian (Python) → FastAPI
-gRPC  → fgg-worker (Rust) → HTTP → Granian → FastAPI
+HTTP  → granian | uvicorn | gunicorn+uvicorn → FastAPI
+gRPC  → fgg-worker (Rust) → HTTP → upstream → FastAPI
 ```
 
-- Python: schema + Granian orchestrator — **без** `import grpc` / grpcio
+- Python: schema + HTTP orchestrator — **без** `import grpc` / grpcio
+- `--http-backend`: `granian` (default) / `uvicorn` / `gunicorn`
 - Rust `fgg-worker` / `fgg-core`: весь gRPC
 - Coverage **≥ 93%** для Python и Rust `fgg-core`
 
