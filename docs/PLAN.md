@@ -12,7 +12,7 @@ gRPC  → fgg-worker (Rust) → HTTP → upstream → FastAPI
 - Python: schema + HTTP orchestrator — **без** `import grpc` / grpcio
 - `--http-backend`: `granian` (default) / `uvicorn` / `gunicorn`
 - Rust `fgg-worker` / `fgg-core`: весь gRPC
-- Coverage **≥ 93%** для Python и Rust `fgg-core`
+- Coverage **≥ 93%** для Python и Rust workspace (`fgg-core` + `fgg-worker`)
 
 ## В скоупе
 

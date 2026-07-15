@@ -6,6 +6,10 @@ description = "gRPC server (Rust): RpcRequest → HTTP → Granian/FastAPI — n
 rust-version = "1.83"
 license = "MIT"
 
+[lib]
+name = "fgg_worker"
+path = "src/lib.rs"
+
 [[bin]]
 name = "fgg-worker"
 path = "src/main.rs"
@@ -26,3 +30,5 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 tokio = { version = "1.42", features = ["macros", "rt-multi-thread", "net", "io-util"] }
+http-body-util = "0.1"
+futures-util = "0.3"
