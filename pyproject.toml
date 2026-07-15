@@ -1,6 +1,6 @@
 [project]
 name = "fastapi-grpc-gateway"
-version = "0.2.0"
+version = "0.3.0"
 description = "FastAPI + Granian HTTP; gRPC served by Rust fgg-worker (no Python gRPC)"
 readme = "README.md"
 requires-python = ">=3.11"

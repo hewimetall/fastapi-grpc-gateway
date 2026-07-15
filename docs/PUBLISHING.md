@@ -36,7 +36,7 @@ bash scripts/test_go_client.sh
 
 1. Версия в `pyproject.toml` + `crates/*/Cargo.toml`.
 2. `uv lock` при смене Python-зависимостей.
-3. Тег `v0.2.0` → workflow Release: wheel + `fgg-worker` binary + PyPI.
+3. Тег `v0.3.0` → workflow Release: wheel + `fgg-worker` binary + PyPI.
 
 ### Dry-run
 
