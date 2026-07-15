@@ -102,13 +102,13 @@ scripts/
 uv sync --extra dev
 cargo build -p fgg-worker
 uv run pytest
-bash scripts/test_rust_coverage.sh   # fgg-core ≥ 93%
+bash scripts/test_rust_coverage.sh   # Rust workspace ≥ 93%
 bash scripts/test_go_client.sh       # gRPC e2e через Go
 ```
 
 Пороги:
 - Python: **≥ 93%**
-- Rust `fgg-core`: **≥ 93%**
+- Rust (`fgg-core` + `fgg-worker` libs): **≥ 93%**
 
 ---
 

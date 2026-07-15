@@ -60,7 +60,7 @@ bash scripts/test_rust_coverage.sh
 bash scripts/test_go_client.sh
 ```
 
-Coverage: Python **≥ 93%**, Rust `fgg-core` **≥ 93%**.
+Coverage: Python **≥ 93%**, Rust workspace (`fgg-core` + `fgg-worker`) **≥ 93%**.
 
 ---
 
